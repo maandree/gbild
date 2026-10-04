@@ -1,0 +1,23 @@
+BUG)	Dragging the image with Control held down, or using the middle button, shall scroll the display area
+
+BUG)	It shall be possible to drag and drop (started without any modifier) the image
+	(the file itself is being dragged, not a copy of the image) to another application.
+
+LATER)	Optional (opt-in) side-pane ("_Property pane") with image properties (accelerator: F9)
+LATER)	Optional (opt-in) bottom-pane ("Image _collection") with image thumbnails (accelerator: Control+F9)
+		The bottom-pane shall support:
+		*	drag and drop to reorder
+		*	drag to another application to drop the file by path there
+		*	drop form another application to add the image to the collection
+		*	right-clicking on a thumbnail and "_Remove from collection" (icon: edit-delete)
+
+LATER)	Automatically go to next picture
+LATER)	What file types shall be supported
+LATER)	Animation support
+LATER)	Preferences for transparency
+LATER)	Preferences for changling GDK_INTERP_BILINEAR
+LATER)	Fix "GFileInfo created without standard::is-hidden" error message
+LATER)	Fix "GFileInfo created without standard::is-backup" error message
+LATER)	Add support for farbfeld
+LATER)	Add support for lss16
+LATER)	Add support for pam (portable anymap)

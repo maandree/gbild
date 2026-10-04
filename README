@@ -1,0 +1,22 @@
+NAME
+       gbild - GTK+ 2 image viewer
+
+SYNOPSIS
+       gbild [-f] [file] ...
+
+DESCRIPTION
+       gbild is a GTK+ 2 image viewer.
+
+OPTIONS
+       -f	Start in full-screen mode.
+
+OPERANDS
+	file
+		Image file to open.
+
+EXIT STATUS
+	0	The program exited successfully.
+	1	An error occurred.
+
+SEE ALSO
+	None.

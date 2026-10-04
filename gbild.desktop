@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=gbild
+Comment=View image files
+Exec=gbild %F
+Icon=image-viewer
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=image/wmf;image/apm;image/dng;image/cr2;image/crw;image/nef;image/orf;image/pef;image/arw;image/erf;image/mrw;image/raf;image/webp;image/ani;image/bmp;image/ico;image/cur;image/pnm;image/pbm;image/pgm;image/ppm;image/xbm;image/tga;image/targa;image/icns;image/qtif;image/qif;image/avif;image/dds;image/gif;image/heic;image/heif;image/jpeg;image/jpe;image/jpg;image/jxl;image/exr;image/png;image/qoi;image/raw;image/svg;image/svgz;image/svg.gz;image/tiff;image/tif;image/xpm;

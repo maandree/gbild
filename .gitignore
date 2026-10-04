@@ -1,0 +1,17 @@
+*\#*
+*~
+*.o
+*.a
+*.t
+*.lo
+*.to
+*.su
+*.so
+*.so.*
+*.dll
+*.dylib
+*.gch
+*.gcov
+*.gcno
+*.gcda
+/gbild
