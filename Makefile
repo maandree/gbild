@@ -4,9 +4,24 @@ CONFIGFILE = config.mk
 include $(CONFIGFILE)
 
 OBJ =\
+	dragging.o\
+	dropping.o\
+	events.o\
+	files.o\
+	filters.o\
+	image.o\
+	opening.o\
+	printing.o\
+	properties.o\
+	transform.o\
+	ui.o\
+	zoom.o\
+	logical-scroll-pane.o\
 	gbild.o
 
-HDR =
+HDR =\
+	common.h\
+	logical-scroll-pane.h
 
 all: gbild
 $(OBJ): $(HDR)
