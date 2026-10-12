@@ -1,6 +1,5 @@
 /* See LICENSE file for copyright and license details. */
 #include "common.h"
-#include <math.h> /* just for HUGE_VAL, no -lm needed */
 
 Zoom zoom = {1.0};
 enum zoom_mode zoom_mode = ZOOM_BEST_FIT;

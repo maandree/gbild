@@ -12,6 +12,9 @@ free_files(void)
 		--nfiles;
 		free(files[nfiles].path);
 		g_clear_object(&files[nfiles].image);
+		if (files[nfiles].exif_tags)
+			g_strfreev(files[nfiles].exif_tags);
+		g_clear_object(&files[nfiles].exif);
 	}
 	free(files);
 	files = NULL;
@@ -25,6 +28,8 @@ files_from_array(struct file *selected_files, size_t nselected_files)
 
 	for (i = 0u, n = 0u; i < nselected_files; i++) {
 		selected_files[i].image = NULL;
+		selected_files[i].exif_tags = NULL;
+		selected_files[i].exif = NULL;
 		if (load_image(&selected_files[i], 0)) {
 			if (i != n)
 				selected_files[n] = selected_files[i];
@@ -53,6 +58,8 @@ files_from_list(struct file **files_out, GSList *selected_files)
 	for (file = selected_files, i = 0u; file; file = file->next) {
 		new_files[i].path = estrdup(file->data);
 		new_files[i].image = NULL;
+		new_files[i].exif_tags = NULL;
+		new_files[i].exif = NULL;
 		g_free(file->data);
 
 		if (load_image(&new_files[i], 0))
@@ -88,6 +95,8 @@ set_files_from_argv(int argc, char **argv)
 	for (i = 0u; i < nfiles; i++) {
 		files[i].path = estrdup(argv[i]);
 		files[i].image = NULL;
+		files[i].exif_tags = NULL;
+		files[i].exif = NULL;
 		if (!load_image(&files[i], 1)) {
 			free(files[i].path);
 			ok = 0;

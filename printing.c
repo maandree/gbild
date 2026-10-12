@@ -1,6 +1,5 @@
 /* See LICENSE file for copyright and license details. */
 #include "common.h"
-#include <math.h>
 
 #define LIST_UNITS(X, ...)\
 	X(UNIT_MILLIMETRES,        "Millimetres",                       72.0 / 25.4)  __VA_ARGS__\
@@ -45,6 +44,7 @@ struct print_data {
 	double height;
 	double left;
 	double top;
+	double aspect;
 };
 
 struct positioning_widget {
@@ -117,6 +117,35 @@ get_printable_size(GtkPageSetup *setup, double *width, double *height)
 	*height = MAX(*height, 0.1);
 }
 
+static int
+get_dpi_option(GdkPixbuf *image, const char *name, double *dpi)
+{
+	const char *text = gdk_pixbuf_get_option(image, name);
+	char *end;
+	double value;
+	if (!text)
+		return 0;
+	value = strtod(text, &end);
+	while (isspace(*(unsigned char *)end))
+		end++;
+	if (end == text || *end || !isfinite(value) || value <= 0.0)
+		return 0;
+	*dpi = value;
+	return 1;
+}
+
+static int
+get_print_size_from_resolution(GdkPixbuf *image, double *width, double *height)
+{
+	double x_dpi, y_dpi;
+	if (!get_dpi_option(image, "x-dpi", &x_dpi) ||
+	    !get_dpi_option(image, "y-dpi", &y_dpi))
+		return 0;
+	*width  = 72.0 * gdk_pixbuf_get_width(image)  / x_dpi;
+	*height = 72.0 * gdk_pixbuf_get_height(image) / y_dpi;
+	return 1;
+}
+
 static double
 get_preview_scale(GtkWidget *preview, struct positioning_widget *widget)
 {
@@ -146,8 +175,6 @@ static int
 set_field_value(struct positioning_widget *widget, enum field field, double value)
 {
 	struct print_data *data = widget->data;
-	int image_width  = gdk_pixbuf_get_width(data->image);
-	int image_height = gdk_pixbuf_get_height(data->image);
 	double aspect, pos, size, page, pos_opp, size_opp, page_opp;
 	double new_pos, new_size, new_pos_opp, new_size_opp;
 	double *posp, *pos_oppp, *sizep, *size_oppp, limit;
@@ -162,7 +189,7 @@ set_field_value(struct positioning_widget *widget, enum field field, double valu
 		pos_oppp = &data->top;
 		size_oppp = &data->height;
 		page_opp = widget->page_height;
-		aspect = (double)image_height / (double)image_width;
+		aspect = 1.0 / data->aspect;
 		break;
 
 	case FIELD_HEIGHT:
@@ -174,7 +201,7 @@ set_field_value(struct positioning_widget *widget, enum field field, double valu
 		pos_oppp = &data->left;
 		size_oppp = &data->width;
 		page_opp = widget->page_width;
-		aspect = (double)image_width / (double)image_height;
+		aspect = data->aspect;
 		break;
 	}
 
@@ -257,11 +284,13 @@ positioning_preview_expose(GtkWidget *preview, GdkEventExpose *event, void *user
 	double scale = get_preview_scale(preview, widget);
 	double w = scale * widget->page_width;
 	double h = scale * widget->page_height;
-	double image_scale;
 	double page_x = preview->allocation.width - 8.0 - w;
 	double page_y = 8.0;
-	int image_width;
+	int width, height;
 	cairo_t *cr;
+
+	width = gdk_pixbuf_get_width(data->image);
+	height = gdk_pixbuf_get_height(data->image);
 
 	cr = gdk_cairo_create(preview->window);
 
@@ -278,10 +307,8 @@ positioning_preview_expose(GtkWidget *preview, GdkEventExpose *event, void *user
 
 	cairo_rectangle(cr, page_x, page_y, w, h);
 	cairo_clip(cr);
-	image_width = gdk_pixbuf_get_width(data->image);
-	image_scale = scale * data->width / (double)image_width;
 	cairo_translate(cr, page_x + scale * data->left, page_y + scale * data->top);
-	cairo_scale(cr, image_scale, image_scale);
+	cairo_scale(cr, scale * data->width / width, scale * data->height / height);
 	gdk_cairo_set_source_pixbuf(cr, data->image, 0.0, 0.0);
 	cairo_paint(cr);
 
@@ -409,7 +436,6 @@ positioning_preview_scrolled(GtkWidget *preview, GdkEventScroll *event, void *us
 {
 	struct positioning_widget *widget = user;
 	struct print_data *data = widget->data;
-	int image_width, image_height;
 	double aspect, amount, scale, page_x;
 	double pointer_x, pointer_y;
 	double maximum, width, height;
@@ -427,9 +453,7 @@ positioning_preview_scrolled(GtkWidget *preview, GdkEventScroll *event, void *us
 	}
 	amount *= widget->page_width;
 
-	image_width  = gdk_pixbuf_get_width(data->image);
-	image_height = gdk_pixbuf_get_height(data->image);
-	aspect = (double)image_width / (double)image_height;
+	aspect = data->aspect;
 
 	maximum = MIN(widget->page_width, widget->page_height * aspect);
 	width = CLAMP(data->width + amount, 0.0, maximum);
@@ -573,6 +597,24 @@ positioning_entry_focus_out(GtkWidget *entry, GdkEventFocus *event, void *user)
 	return 0;
 }
 
+static void
+positioning_centre_horizontally(GtkButton *button, void *user)
+{
+	struct positioning_widget *widget = user;
+	(void) button;
+	widget->data->left = 0.5 * (widget->page_width - widget->data->width);
+	update_positioning_widget(widget, NFIELDS);
+}
+
+static void
+positioning_centre_vertically(GtkButton *button, void *user)
+{
+	struct positioning_widget *widget = user;
+	(void) button;
+	widget->data->top = 0.5 * (widget->page_height - widget->data->height);
+	update_positioning_widget(widget, NFIELDS);
+}
+
 static GtkWidget *
 create_positioning_widget(GtkPrintOperation *operation, void *user)
 {
@@ -590,7 +632,7 @@ create_positioning_widget(GtkPrintOperation *operation, void *user)
 	struct print_data *data = user;
 	struct positioning_widget *positioning;
 	GtkPageSetup *setup;
-	GtkWidget *box, *grid, *label;
+	GtkWidget *box, *grid, *label, *button;
 	enum field field;
 	size_t unit;
 	unsigned int row, column;
@@ -601,7 +643,7 @@ create_positioning_widget(GtkPrintOperation *operation, void *user)
 	get_printable_size(setup, &positioning->page_width, &positioning->page_height);
 
 	box = gtk_hbox_new(0, 12);
-	grid = gtk_table_new(4, 4, 0);
+	grid = gtk_table_new(5, 4, 0);
 	gtk_container_set_border_width(GTK_CONTAINER(grid), 8);
 	gtk_table_set_row_spacings(GTK_TABLE(grid), 6);
 	gtk_table_set_col_spacings(GTK_TABLE(grid), 6);
@@ -643,6 +685,12 @@ create_positioning_widget(GtkPrintOperation *operation, void *user)
 			                 GTK_FILL, 0, 4u, 4u);
 		}
 	}
+	button = gtk_button_new_with_mnemonic("Centre h_orizontally");
+	g_signal_connect(button, "clicked", G_CALLBACK(&positioning_centre_horizontally), positioning);
+	gtk_table_attach(GTK_TABLE(grid), button, 0, 2, 4, 5, GTK_EXPAND | GTK_FILL, 0, 4u, 4u);
+	button = gtk_button_new_with_mnemonic("Centre v_ertically");
+	g_signal_connect(button, "clicked", G_CALLBACK(&positioning_centre_vertically), positioning);
+	gtk_table_attach(GTK_TABLE(grid), button, 2, 4, 4, 5, GTK_EXPAND | GTK_FILL, 0, 4u, 4u);
 	positioning->preview = gtk_drawing_area_new();
 	gtk_widget_set_size_request(positioning->preview, 200, 200);
 	gtk_widget_add_events(positioning->preview,
@@ -695,16 +743,18 @@ draw_page(GtkPrintOperation *operation, GtkPrintContext *context, int page, void
 {
 	struct print_data *data = user;
 	GdkPixbuf *image = data->image;
-	double scale;
+	int width, height;
 	cairo_t *cr;
 
 	(void) operation;
 	(void) page;
 
-	scale = data->width / gdk_pixbuf_get_width(image);
+	width = gdk_pixbuf_get_width(image);
+	height = gdk_pixbuf_get_height(image);
+
 	cr = gtk_print_context_get_cairo_context(context);
 	cairo_translate(cr, data->left, data->top);
-	cairo_scale(cr, scale, scale);
+	cairo_scale(cr, data->width / (double)width, data->height / (double)height);
 	gdk_cairo_set_source_pixbuf(cr, image, 0.0, 0.0);
 	cairo_paint(cr);
 }
@@ -715,8 +765,10 @@ open_print(GdkPixbuf *image)
 	struct print_data data;
 	GtkPrintOperation *operation;
 	GtkPageSetup *setup;
+	GdkPixbuf *metadata_image;
 	GtkPageOrientation orientation = GTK_PAGE_ORIENTATION_PORTRAIT;
-	double page_width, page_height, s, x, y;
+	double page_width, page_height, s, x, y, temporary;
+	int has_physical_size;
 	int width, height;
 
 	if (!image)
@@ -727,19 +779,43 @@ open_print(GdkPixbuf *image)
 
 	width  = gdk_pixbuf_get_width(data.image);
 	height = gdk_pixbuf_get_height(data.image);
+	metadata_image = get_original_image();
+	if (!metadata_image)
+		metadata_image = data.image;
+	has_physical_size = get_print_size_from_resolution(metadata_image, &data.width, &data.height);
+	if (!has_physical_size) {
+		data.width = width;
+		data.height = height;
+	} else {
+		switch (trans & 7u) {
+		case TRANS_CLOCKWISE:
+		case TRANS_ANTICLOCKWISE:
+		case TRANS_TRANSPOSE:
+		case TRANS_ANTITRANSPOSE:
+			temporary = data.width;
+			data.width = data.height;
+			data.height = temporary;
+			break;
+		default:
+			break;
+		}
+	}
+	data.aspect = data.width / data.height;
 
-	if (width > height)
+	if (data.width > data.height)
 		orientation = GTK_PAGE_ORIENTATION_LANDSCAPE;
 
 	setup = gtk_page_setup_new();
 	gtk_page_setup_set_orientation(setup, orientation);
 	get_printable_size(setup, &page_width, &page_height);
 
-	x = page_width / (double)width;
-	y = page_height / (double)height;
+	x = page_width / data.width;
+	y = page_height / data.height;
 	s = MIN(x, y);
-	data.width  = s * width;
-	data.height = s * height;
+	if (!has_physical_size || s < 1.0) {
+		data.width *= s;
+		data.height *= s;
+	}
 	data.left = 0.5 * (page_width - data.width);
 	data.top  = 0.5 * (page_height - data.height);
 

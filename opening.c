@@ -1,6 +1,69 @@
 /* See LICENSE file for copyright and license details. */
 #include "common.h"
 
+static GExiv2Metadata *
+load_exif_metadata(const unsigned char *data, size_t length, char ***tags_out)
+{
+	GExiv2Metadata *metadata;
+	GError *error = NULL;
+	*tags_out = NULL;
+	metadata = gexiv2_metadata_new();
+	if (gexiv2_metadata_open_buf(metadata, data, (long int)length, &error)) {
+		*tags_out = gexiv2_metadata_get_exif_tags(metadata);
+		return metadata;
+	}
+	g_clear_error(&error);
+	g_object_unref(metadata);
+	return NULL;
+}
+
+static int
+read_file(int fd, unsigned char **buf_out, size_t *size_out)
+{
+	unsigned char *buf = NULL, *new;
+	size_t off = 0u;
+	size_t size = 0u;
+	ssize_t r;
+	int saved_errno;
+
+	*buf_out = NULL;
+	*size_out = 0u;
+
+	for (;;) {
+		if (off == size) {
+			if (size > SIZE_MAX - (8u << 10)) {
+				errno = ENOMEM;
+				goto fail;
+			}
+			new = realloc(buf, size += 8u << 10);
+			if (!new)
+				goto fail;
+			buf = new;
+		}
+
+		r = read(fd, &buf[off], size - off);
+		if (r <= 0) {
+			if (!r)
+				break;
+			if (errno == EINTR)
+				continue;
+			goto fail;
+		}
+		off += (size_t)r;
+	}
+
+	*buf_out = buf;
+	*size_out = off;
+
+	return 0;
+
+fail:
+	saved_errno = errno;
+	free(buf);
+	errno = saved_errno;
+	return -1;
+}
+
 int
 load_image(struct file *file, int errors_to_stderr)
 {
@@ -10,8 +73,8 @@ load_image(struct file *file, int errors_to_stderr)
 	GdkPixbuf *image;
 	GdkPixbufLoader *loader = NULL;
 	struct stat st;
-	unsigned char buffer[8 << 10];
-	ssize_t r;
+	unsigned char *buffer = NULL;
+	size_t size;
 	int fd, ret = 1;
 
 	if (!file)
@@ -20,52 +83,51 @@ load_image(struct file *file, int errors_to_stderr)
 	fd = open(file->path, O_RDONLY | O_NOCTTY);
 	if (fd < 0)
 		goto fail_errno;
-
 	if (fstat(fd, &st))
 		goto fail_errno;
-
 	if (!S_ISREG(st.st_mode)) {
 		error_message = "Not a regular file";
 		goto fail;
 	}
+	if (read_file(fd, &buffer, &size))
+		goto fail_errno;
+	file->size = st.st_size;
 
 	loader = gdk_pixbuf_loader_new();
 	if (!loader)
 		goto fail_errno;
-	for (;;) {
-		r = read(fd, buffer, sizeof(buffer));
-		if (r <= 0) {
-			if (!r)
-				break;
-			if (errno == EINTR)
-				continue;
-			goto fail_errno;
-		}
-		if (!gdk_pixbuf_loader_write(loader, buffer, (size_t)r, &error))
-			goto fail_gerror;
-	}
-	if (!gdk_pixbuf_loader_close(loader, &error)) {
-	fail_gerror:
-		error_message = error->message;
-		goto fail;
-	}
+	if (!gdk_pixbuf_loader_write(loader, buffer, size, &error))
+		goto fail_gerror;
+	if (!gdk_pixbuf_loader_close(loader, &error))
+		goto fail_gerror;
 	image = gdk_pixbuf_loader_get_pixbuf(loader);
 	if (!image) {
 		error_message = "Unsupported image format";
 		goto fail;
 	}
 	g_object_ref(image);
-
 	g_clear_object(&file->image);
-
-	file->size = st.st_size;
 	file->image = image;
 
+	if (file->exif_tags) {
+		g_strfreev(file->exif_tags);
+		file->exif_tags = NULL;
+	}
+	g_clear_object(&file->exif);
+
+	if (size <= (size_t)LONG_MAX)
+		file->exif = load_exif_metadata(buffer, size, &file->exif_tags);
+
 out:
+	free(buffer);
 	g_clear_object(&loader);
 	if (fd >= 0)
 		close(fd);
 	return ret;
+
+fail_gerror:
+	error_message = error->message;
+	goto fail;
 
 fail_errno:
 	error_message = strerror(errno);

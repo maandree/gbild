@@ -1,8 +1,3 @@
-Add alignment buttons to the print dialogue.
-
-Some images may have a physical dimension specified.
-This should at least be honoured during print, maybe even on display.
-
 Optional (opt-in) side-pane ("_Property pane") with image properties (accelerator: F9)
 
 Optional (opt-in) bottom-pane ("Image _collection") with image thumbnails (accelerator: Control+F9)
@@ -16,13 +11,15 @@ Automatically go to next picture
 
 Animation support
 
+"Properties" shall display Exif thumbnail if embedded
+
 Preferences for transparency
 
 Preferences for changling GDK_INTERP_BILINEAR
 
-Fix "GFileInfo created without standard::is-hidden" error message
+Preferences for scaling to physical size rather than 1:1 pixel mapping
 
-Fix "GFileInfo created without standard::is-backup" error message
+Perference for automatically applying embedded transformation ("orientation")
 
 Add support for farbfeld
 

@@ -18,9 +18,11 @@
 # pragma GCC diagnostic ignored "-Wstrict-prototypes"
 #endif
 #include <gdk/gdkkeysyms.h>
+#include <gexiv2/gexiv2.h>
 #include <gtk/gtk.h>
 #include <libsimple.h>
 #include <libsimple-arg.h>
+#include <math.h>
 #if defined(__GNUC__)
 # pragma GCC diagnostic pop
 #endif
@@ -79,6 +81,8 @@ struct file {
 	char *path;
 	off_t size;
 	GdkPixbuf *image;
+	char **exif_tags;
+	GExiv2Metadata *exif;
 };
 
 typedef double Zoom; /* TODO */
