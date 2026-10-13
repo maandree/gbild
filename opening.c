@@ -64,14 +64,33 @@ fail:
 	return -1;
 }
 
+static int
+get_raster_dpi_option(GdkPixbuf *raster, const char *name, double *dpi)
+{
+	const char *text = gdk_pixbuf_get_option(raster, name);
+	char *end;
+	double value;
+	if (!text)
+		return 0;
+	value = strtod(text, &end);
+	while (isspace(*(unsigned char *)end))
+		end++;
+	if (end == text || *end || !isfinite(value) || value <= 0.0)
+		return 0;
+	*dpi = value;
+	return 1;
+}
+
 int
 load_image(struct file *file, int errors_to_stderr)
 {
 	const char *error_message;
 	GError *error = NULL;
 	GtkWidget *dialog;
-	GdkPixbuf *image;
+	GdkPixbuf *raster;
 	GdkPixbufLoader *loader = NULL;
+	GdkPixbufFormat *format;
+	RsvgHandle *vector = NULL;
 	struct stat st;
 	unsigned char *buffer = NULL;
 	size_t size;
@@ -100,14 +119,31 @@ load_image(struct file *file, int errors_to_stderr)
 		goto fail_gerror;
 	if (!gdk_pixbuf_loader_close(loader, &error))
 		goto fail_gerror;
-	image = gdk_pixbuf_loader_get_pixbuf(loader);
-	if (!image) {
+	raster = gdk_pixbuf_loader_get_pixbuf(loader);
+	if (!raster) {
 		error_message = "Unsupported image format";
 		goto fail;
 	}
-	g_object_ref(image);
-	g_clear_object(&file->image);
-	file->image = image;
+	format = gdk_pixbuf_loader_get_format(loader);
+	if (format) {
+		char *name = gdk_pixbuf_format_get_name(format);
+		if (!strcmp(name, "svg"))
+			vector = rsvg_handle_new_from_file(file->path, &error);
+		g_free(name);
+		if (!vector)
+			g_clear_error(&error);
+	}
+	g_object_ref(raster);
+	g_clear_object(&file->image.raster);
+	g_clear_object(&file->image.vector);
+	file->image.raster = raster;
+	file->image.vector = vector;
+	vector = NULL;
+
+	file->image.width = gdk_pixbuf_get_width(file->image.raster);
+	file->image.height = gdk_pixbuf_get_height(file->image.raster);
+	file->image.has_x_dpi = get_raster_dpi_option(file->image.raster, "x-dpi", &file->image.x_dpi);
+	file->image.has_y_dpi = get_raster_dpi_option(file->image.raster, "y-dpi", &file->image.y_dpi);
 
 	if (file->exif_tags) {
 		g_strfreev(file->exif_tags);
@@ -120,6 +156,7 @@ load_image(struct file *file, int errors_to_stderr)
 
 out:
 	free(buffer);
+	g_clear_object(&vector);
 	g_clear_object(&loader);
 	if (fd >= 0)
 		close(fd);

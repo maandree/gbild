@@ -1,23 +1,6 @@
 /* See LICENSE file for copyright and license details. */
 #include "common.h"
 
-static int
-get_dpi_option(GdkPixbuf *image, const char *name, double *dpi)
-{
-	const char *text = gdk_pixbuf_get_option(image, name);
-	char *end;
-	double value;
-	if (!text)
-		return 0;
-	value = strtod(text, &end);
-	while (isspace(*(unsigned char *)end))
-		end++;
-	if (end == text || *end || !isfinite(value) || value <= 0.0)
-		return 0;
-	*dpi = value;
-	return 1;
-}
-
 static GtkWidget *
 new_metadata_label(const char *text)
 {
@@ -29,12 +12,15 @@ new_metadata_label(const char *text)
 }
 
 static void
-add_metadata_row(GtkTable *table, guint row, const char *name, const char *value)
+add_metadata_row(GtkTable *table, guint row, PangoAttrList *name_attributes, const char *name, const char *value)
 {
+	GtkWidget *property = gtk_vbox_new(0, 0);
 	GtkWidget *name_label = new_metadata_label(name);
 	GtkWidget *value_label = new_metadata_label(value);
-	gtk_table_attach(table, name_label, 0, 1, row, row + 1, GTK_FILL, GTK_FILL, 0, 0);
-	gtk_table_attach(table, value_label, 1, 2, row, row + 1, GTK_EXPAND | GTK_FILL, GTK_FILL, 12, 0);
+	gtk_label_set_attributes(GTK_LABEL(name_label), name_attributes);
+	gtk_box_pack_start(GTK_BOX(property), name_label, 0, 0, 0);
+	gtk_box_pack_start(GTK_BOX(property), value_label, 0, 0, 0);
+	gtk_table_attach(table, property, 0, 1, row, row + 1, GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
 }
 
 static int
@@ -119,10 +105,10 @@ format_file_size(off_t size)
 }
 
 static char *
-format_pixel_size(GdkPixbuf *image)
+format_pixel_size(GdkPixbuf *raster)
 {
-	int w = gdk_pixbuf_get_width(image);
-	int h = gdk_pixbuf_get_height(image);
+	int w = gdk_pixbuf_get_width(raster);
+	int h = gdk_pixbuf_get_height(raster);
 	char *text = emalloc(2u * 3u * sizeof(w) + sizeof(" ×  pixels"));
 	if (sprintf(text, "%i × %i pixels", w, h) < 0)
 		eprintf("sprintf:");
@@ -171,33 +157,26 @@ format_physical_size(int pixels, double resolution)
 	return text;
 }
 
-static char *
-format_physical_width(GdkPixbuf *image, double resolution)
-{
-	return format_physical_size(gdk_pixbuf_get_width(image), resolution);
-}
-
-static char *
-format_physical_height(GdkPixbuf *image, double resolution)
-{
-	return format_physical_size(gdk_pixbuf_get_height(image), resolution);
-}
-
-static GtkWidget *
+GtkWidget *
 create_property_table(struct file *file)
 {
 	GtkWidget *table;
-	unsigned i, row = 0u, rows = 3u;
-	const char *orientation;
-	char *text, orientation_buf[3u * sizeof(long int) + 1u];
-	double x_dpi, y_dpi;
-	int has_x_dpi, has_y_dpi;
+	PangoContext *context;
+	PangoFontMetrics *metrics;
+	PangoAttrList *title_attributes;
+	unsigned i, row = 0u, rows = 2u;
+	const char *orientation = NULL;
+	char *text, *tag, orientation_buf[3u * sizeof(long int) + 1u];
+	int spacing;
 	GList *keys, *key;
 	GHashTable *options;
 	GError *error;
 	long int li;
 
-	options = gdk_pixbuf_get_options(file->image);
+	title_attributes = pango_attr_list_new();
+	pango_attr_list_insert(title_attributes, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
+
+	options = gdk_pixbuf_get_options(file->image.raster);
 
 	keys = g_list_sort(g_hash_table_get_keys(options), (GCompareFunc)&strcmp);
 	for (key = keys; key; key = key->next)
@@ -205,69 +184,69 @@ create_property_table(struct file *file)
 
 	rows += file->exif_tags ? (unsigned)g_strv_length(file->exif_tags) : 0u;
 
-	orientation = gdk_pixbuf_get_option(file->image, "orientation");
-	if (!orientation && file->exif) {
-		error = NULL;
-		li = gexiv2_metadata_try_get_tag_long(file->exif, "Exif.Image.Orientation", &error);
-		if (error)
-			g_clear_error(&error);
-		else if (sprintf(orientation_buf, "%li", li) < 0)
-			eprintf("sprintf:");
-		else
-			orientation = orientation_buf;
-	}
-	rows += orientation ? 1u : 0u;
+	if (file->image.raster && !file->image.vector) {
+		rows += 1u;
 
-	has_x_dpi = get_dpi_option(file->image, "x-dpi", &x_dpi);
-	has_y_dpi = get_dpi_option(file->image, "y-dpi", &y_dpi);
-	rows += 2u * (unsigned)(has_x_dpi + has_y_dpi);
+		orientation = gdk_pixbuf_get_option(file->image.raster, "orientation");
+		if (!orientation && file->exif) {
+			error = NULL;
+			li = gexiv2_metadata_try_get_tag_long(file->exif, "Exif.Image.Orientation", &error);
+			if (error)
+				g_clear_error(&error);
+			else if (sprintf(orientation_buf, "%li", li) < 0)
+				eprintf("sprintf:");
+			else
+				orientation = orientation_buf;
+		}
+		rows += orientation ? 1u : 0u;
+	}
 
-	table = gtk_table_new(rows, 2, 0);
-	gtk_table_set_row_spacings(GTK_TABLE(table), 6);
-	gtk_table_set_col_spacings(GTK_TABLE(table), 12);
 
-	add_metadata_row(GTK_TABLE(table), row++, "File", file->path);
-	add_metadata_row(GTK_TABLE(table), row++, "File size", text = format_file_size(file->size));
-	free(text);
-	add_metadata_row(GTK_TABLE(table), row++, "Pixel dimensions", text = format_pixel_size(file->image));
-	free(text);
-	if (orientation) {
-		add_metadata_row(GTK_TABLE(table), row++, "Orientation", text = format_orientation(orientation));
-		free(text);
-	}
-	if (has_x_dpi) {
-		add_metadata_row(GTK_TABLE(table), row++, "Horizontal resolution", text = format_resolution(x_dpi));
-		free(text);
-	}
-	if (has_y_dpi) {
-		add_metadata_row(GTK_TABLE(table), row++, "Vertical resolution", text = format_resolution(y_dpi));
-		free(text);
-	}
-	if (has_x_dpi) {
-		add_metadata_row(GTK_TABLE(table), row++, "Physical width", text = format_physical_width(file->image, x_dpi));
-		free(text);
-	}
-	if (has_y_dpi) {
-		add_metadata_row(GTK_TABLE(table), row++, "Physical height", text = format_physical_height(file->image, x_dpi));
-		free(text);
-	}
+	table = gtk_table_new(rows, 1, 0);
+	context = gtk_widget_get_pango_context(table);
+	metrics = pango_context_get_metrics(context, NULL, pango_context_get_language(context));
+	spacing = PANGO_PIXELS(pango_font_metrics_get_ascent(metrics) + pango_font_metrics_get_descent(metrics));
+	spacing /= 2;
+	pango_font_metrics_unref(metrics);
+	gtk_table_set_row_spacings(GTK_TABLE(table), (guint)spacing);
+
+#define ROW(NAME, VALUE)\
+	(text = NULL, add_metadata_row(GTK_TABLE(table), row++, title_attributes, NAME, VALUE), free(text))
+
+	ROW("File", file->path);
+	ROW("File size", text = format_file_size(file->size));
+	if (file->image.raster && !file->image.vector)
+		ROW("Pixel dimensions", text = format_pixel_size(file->image.raster));
+	if (orientation)
+		ROW("Orientation", text = format_orientation(orientation));
+	if (file->image.has_x_dpi)
+		ROW("Horizontal resolution", text = format_resolution(file->image.x_dpi));
+	if (file->image.has_y_dpi)
+		ROW("Vertical resolution", text = format_resolution(file->image.y_dpi));
+	if (file->image.has_x_dpi)
+		ROW("Physical width", text = format_physical_size(file->image.width, file->image.x_dpi));
+	if (file->image.has_y_dpi)
+		ROW("Physical height", text = format_physical_size(file->image.height, file->image.y_dpi));
 
 	for (key = keys; key; key = key->next)
 		if (is_unrecognised_metadata(key->data))
-			add_metadata_row(GTK_TABLE(table), row++, key->data, g_hash_table_lookup(options, key->data));
+			ROW(key->data, g_hash_table_lookup(options, key->data));
 	g_list_free(keys);
 
 	if (file->exif_tags) {
 		for (i = 0u; file->exif_tags[i]; i++) {
 			error = NULL;
-			text = gexiv2_metadata_try_get_tag_interpreted_string(file->exif, file->exif_tags[i], &error);
+			tag = gexiv2_metadata_try_get_tag_interpreted_string(file->exif, file->exif_tags[i], &error);
 			g_clear_error(&error);
-
-			add_metadata_row(GTK_TABLE(table), row++, file->exif_tags[i], text ? text : "");
-			g_free(text);
+			if (tag)
+				ROW(file->exif_tags[i], tag);
+			g_free(tag);
 		}
 	}
 
+#undef ROW
+
+	pango_attr_list_unref(title_attributes);
 	return table;
 }
 
@@ -277,7 +256,7 @@ open_properties(struct file *file)
 	GtkWidget *dialog, *scrolled;
 	char *title;
 
-	if (!file || !file->path || !file->image)
+	if (!file || !file->path)
 		return;
 
 	dialog = gtk_dialog_new_with_buttons(title = format_title(file),

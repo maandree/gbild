@@ -5,8 +5,13 @@ USAGE("[-f] [file] ...");
 
 static int suspend_expose = 0;
 
+static cairo_pattern_t *chequer_pattern;
+static GdkColor cached_chequer_colours[2];
+static uint16_t cached_chequer_alphas[2];
+static int cached_chequer_size;
+
 static size_t
-format_statusbar_message(char *buffer, size_t size, struct file *file)
+format_statusbar_message(char *buffer, size_t size, struct file *file, struct image *image)
 {
 	char fsize_decimals[3];
 	const char units[] = "BKMGTPEZYRQ";
@@ -35,7 +40,7 @@ done:
 	             "Image %zu of %zu | %ju%s %c | %i × %i pixels | %g%% scale",
 	             current_file + 1u, nfiles,
 	             fsize, fsize_decimals, units[unit],
-	             gdk_pixbuf_get_width(file->image), gdk_pixbuf_get_height(file->image),
+	             image->width, image->height,
 	             100.0 * get_zoom(zoom));
 
 	if (r < 0)
@@ -49,21 +54,104 @@ update_status(void)
 	struct file *file = get_file();
 	char *message = NULL;
 	size_t len;
-	if (file) {
-		len = format_statusbar_message(NULL, 0u, file);
+	struct image image;
+	if (file && get_original_image(&image)) {
+		len = format_statusbar_message(NULL, 0u, file, &image);
 		message = malloc(++len);
-		format_statusbar_message(message, len, file);
+		format_statusbar_message(message, len, file, &image);
 	}
 	set_statusbar_message(message);
 	free(message);
 }
 
+static cairo_pattern_t *
+get_chequer_pattern(void)
+{
+	cairo_surface_t *surface;
+	cairo_t *cr;
+	int i, row, column;
+	double r[2], g[2], b[2], a[2], s;
+
+	if (!chequer_pattern || cached_chequer_size != chequer_size)
+		goto changed;
+	for (i = 0; i < 2; i++) {
+		if (cached_chequer_colours[i].red   != chequer_colours[i].red   ||
+		    cached_chequer_colours[i].green != chequer_colours[i].green ||
+		    cached_chequer_colours[i].blue  != chequer_colours[i].blue  ||
+		    cached_chequer_alphas[i]        != chequer_alphas[i])
+			goto changed;
+	}
+	return chequer_pattern;
+
+changed:
+	for (i = 0; i < 2; i++) {
+		cached_chequer_colours[i] = chequer_colours[i];
+		cached_chequer_alphas[i] = chequer_alphas[i];
+	}
+	cached_chequer_size = chequer_size;
+
+	for (i = 0; i < 2; i++) {
+		r[i] = (1.0 / 65535.0) * chequer_colours[i].red;
+		g[i] = (1.0 / 65535.0) * chequer_colours[i].green;
+		b[i] = (1.0 / 65535.0) * chequer_colours[i].blue;
+		a[i] = (1.0 / 65535.0) * chequer_alphas[i];
+	}
+
+	s = (double)chequer_size;
+
+	surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 2 * chequer_size, 2 * chequer_size);
+	cr = cairo_create(surface);
+	cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
+
+	for (row = 0; row < 2; row++) {
+		for (column = 0; column < 2; column++) {
+			i = (row ^ column) & 1;
+			cairo_set_source_rgba(cr, r[i], g[i], b[i], a[i]);
+			cairo_rectangle(cr, (double)column * s, (double)row * s, s, s);
+			cairo_fill(cr);
+		}
+	}
+	cairo_destroy(cr);
+
+	if (chequer_pattern)
+		cairo_pattern_destroy(chequer_pattern);
+	chequer_pattern = cairo_pattern_create_for_surface(surface);
+	cairo_pattern_set_extend(chequer_pattern, CAIRO_EXTEND_REPEAT);
+	cairo_pattern_set_filter(chequer_pattern, CAIRO_FILTER_NEAREST);
+
+	cairo_surface_destroy(surface);
+	return chequer_pattern;
+}
+
+static void
+draw_transparency_background(cairo_t *cr, struct image *image, double x0, double y0, double width, double height)
+{
+	cairo_matrix_t matrix;
+
+	if (!chequered_background || gtk_toggle_action_get_active(fullscreen))
+		return;
+	if (!image->vector && !gdk_pixbuf_get_has_alpha(image->raster))
+		return;
+
+	cairo_matrix_init_identity(&matrix);
+	cairo_pattern_set_matrix(get_chequer_pattern(), &matrix);
+
+	cairo_save(cr);
+	cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
+	cairo_rectangle(cr, x0, y0, width, height);
+	cairo_clip(cr);
+	cairo_set_source(cr, chequer_pattern);
+	cairo_paint(cr);
+	cairo_restore(cr);
+}
+
 int
 expose_image(GtkWidget *widget, GdkEventExpose *event, void *user)
 {
-	GdkPixbuf *image;
+	struct image image;
 	cairo_t *cr;
 	double height, width, x, y, s;
+	RsvgRectangle viewport;
 
 	(void) user;
 
@@ -76,15 +164,14 @@ expose_image(GtkWidget *widget, GdkEventExpose *event, void *user)
 	cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
 	cairo_rectangle(cr, event->area.x, event->area.y, event->area.width, event->area.height);
 
-	image = get_image();
-	if (!image) {
+	if (!get_image(&image)) {
 		cairo_fill(cr);
 		goto out;
 	}
 
 	s = get_zoom(zoom);
-	width = s * gdk_pixbuf_get_width(image);
-	height = s * gdk_pixbuf_get_height(image);
+	width = s * (double)image.width;
+	height = s * (double)image.height;
 	if (width < widget->allocation.width)
 		x = 0.5 * ((double)widget->allocation.width - width);
 	else
@@ -95,13 +182,24 @@ expose_image(GtkWidget *widget, GdkEventExpose *event, void *user)
 		y = -logical_scroll_pane_get_vadjustment(LOGICAL_SCROLL_PANE(scroll))->value;
 
 	cairo_fill(cr);
+	draw_transparency_background(cr, &image, x, y, width, height);
 
 	cairo_translate(cr, x, y);
 	cairo_scale(cr, s, s);
-	gdk_cairo_set_source_pixbuf(cr, image, 0.0, 0.0);
+	if (image.vector) {
+		viewport = (RsvgRectangle){0.0, 0.0, image.width, image.height};
+		cairo_save(cr);
+		if (image.has_transformer)
+			cairo_transform(cr, &image.transformer);
+		if (rsvg_handle_render_document(image.vector, cr, &viewport, NULL))
+			goto out;
+		cairo_restore(cr);
+	}
+	gdk_cairo_set_source_pixbuf(cr, image.raster, 0.0, 0.0);
+	cairo_pattern_set_filter(cairo_get_source(cr), scaling_filter);
+	cairo_paint(cr);
 
 out:
-	cairo_paint(cr);
 	cairo_destroy(cr);
 	return 1;
 }
@@ -109,39 +207,40 @@ out:
 static void
 show_image(int update_zoom)
 {
-	GdkPixbuf *new_image, *original_image, *display_image;
+	struct image original_image, new_image, *display_image;
+	int transformed;
 	double s;
 
-	original_image = get_original_image();
-	if (!original_image) {
+	if (!get_original_image(&original_image)) {
 		logical_scroll_pane_set_content_size(LOGICAL_SCROLL_PANE(scroll), 1, 1);
 		gtk_widget_queue_draw(display_area);
 		return;
 	}
 
-	new_image = apply_transformations(original_image);
-	display_image = new_image ? new_image : original_image;
+	transformed = apply_transformations(&original_image, &new_image);
+	display_image = transformed ? &new_image : &original_image;
 
 	if (update_zoom && zoom_mode != ZOOM_CUSTOM && zoom_mode != ZOOM_NORMAL)
 		zoom = calculate_zoom_mode(display_image, zoom_mode);
 
 	s = get_zoom(zoom);
 	logical_scroll_pane_set_content_size(LOGICAL_SCROLL_PANE(scroll),
-	                                     (int)(s * gdk_pixbuf_get_width(display_image)),
-	                                     (int)(s * gdk_pixbuf_get_height(display_image)));
+	                                     (int)(s * display_image->width),
+	                                     (int)(s * display_image->height));
 
-	if (transformed_image)
-		g_object_unref(transformed_image);
-	transformed_image = new_image;
+	forget_transformed_raster();
+	if (transformed)
+		transformed_raster = new_image.raster;
 }
 
 static void
 set_images(struct file *new_files, size_t nnew_files)
 {
-	g_clear_object(&transformed_image);
+	forget_transformed_raster();
 	free_files();
 	files = new_files;
 	nfiles = nnew_files;
+	collection_files_changed();
 	navigate_redraw();
 	set_actions_sensitive();
 }
@@ -156,6 +255,7 @@ add_images(struct file *new_files, size_t nnew_files)
 		navigate_redraw();
 	else
 		update_status();
+	collection_files_changed();
 	set_actions_sensitive();
 }
 
@@ -205,34 +305,29 @@ set_zoom_around_point(Zoom new_zoom, double x, double y)
 	GtkAdjustment *hadjustment, *vadjustment;
 	double old_s, new_s, old_x0, old_y0, new_x0, new_y0;
 	double iw, ih, vw, vh, hx, hy, adj_x, adj_y, max;
-	int w, h;
-	GdkPixbuf *image;
+	struct image image;
 
 	if (zoom_eq(new_zoom, zoom))
 		return;
-	image = get_image();
-	if (!image)
+	if (!get_image(&image))
 		goto out;
 
 	old_s = get_zoom(zoom);
 	new_s = get_zoom(new_zoom);
 	zoom = new_zoom;
 
-	w = gdk_pixbuf_get_width(image);
-	h = gdk_pixbuf_get_height(image);
-
 	hadjustment = logical_scroll_pane_get_hadjustment(LOGICAL_SCROLL_PANE(scroll));
 	vadjustment = logical_scroll_pane_get_vadjustment(LOGICAL_SCROLL_PANE(scroll));
 	vw = hadjustment->page_size;
 	vh = vadjustment->page_size;
 
-	iw = old_s * (double)w;
-	ih = old_s * (double)h;
+	iw = old_s * (double)image.width;
+	ih = old_s * (double)image.height;
 	old_x0 = vw > iw ? 0.5 * (vw - iw) : 0.0;
 	old_y0 = vh > ih ? 0.5 * (vh - ih) : 0.0;
 
-	iw = new_s * (double)w;
-	ih = new_s * (double)h;
+	iw = new_s * (double)image.width;
+	ih = new_s * (double)image.height;
 	new_x0 = vw > iw ? 0.5 * (vw - iw) : 0.0;
 	new_y0 = vh > ih ? 0.5 * (vh - ih) : 0.0;
 
@@ -330,29 +425,30 @@ reload_redraw(void)
 	suspend_expose--;
 	if (!suspend_expose)
 		gtk_widget_queue_draw(display_area);
+	update_property_pane();
+	collection_files_changed();
 	update_status();
 }
 
 void
 transform_redraw(enum transformation augment)
 {
-	GdkPixbuf *image;
+	struct image image;
 	GtkAdjustment *hadjustment, *vadjustment;
 	double s, x, y, width, height, max;
 
 	hadjustment = logical_scroll_pane_get_hadjustment(LOGICAL_SCROLL_PANE(scroll));
 	vadjustment = logical_scroll_pane_get_vadjustment(LOGICAL_SCROLL_PANE(scroll));
-	image = get_image();
-	if (!image)
+	if (!get_image(&image))
 		return;
 
 	s = get_zoom(zoom);
-	width = gdk_pixbuf_get_width(image);
-	height = gdk_pixbuf_get_height(image);
+	width  = (double)image.width;
+	height = (double)image.height;
 
 	x = hadjustment->value + 0.5 * hadjustment->page_size;
-	x = s * width > hadjustment->page_size ? x / s : 0.5 * width;
 	y = vadjustment->value + 0.5 * vadjustment->page_size;
+	x = s * width  > hadjustment->page_size ? x / s : 0.5 * width;
 	y = s * height > vadjustment->page_size ? y / s : 0.5 * height;
 	transform_point(augment, &x, &y, &width, &height);
 
@@ -386,16 +482,18 @@ navigate_redraw(void)
 	suspend_expose--;
 	if (!suspend_expose)
 		gtk_widget_queue_draw(display_area);
+	update_property_pane();
+	update_collection();
 	update_status();
 }
 
 int
 recalculate_zoom_mode(void *user)
 {
-	GdkPixbuf *image = get_image();
+	struct image image;
 	(void) user;
-	if (image && zoom_mode != ZOOM_CUSTOM && zoom_mode != ZOOM_NORMAL)
-		set_zoom_and_recentre(calculate_zoom_mode(image, zoom_mode));
+	if (get_image(&image) && zoom_mode != ZOOM_CUSTOM && zoom_mode != ZOOM_NORMAL)
+		set_zoom_and_recentre(calculate_zoom_mode(&image, zoom_mode));
 	return 0;
 }
 
@@ -438,8 +536,9 @@ main(int argc, char *argv[])
 
 	gtk_main();
 
-	if (transformed_image)
-		g_object_unref(transformed_image);
+	if (chequer_pattern)
+		cairo_pattern_destroy(chequer_pattern);
+	forget_transformed_raster();
 	free_ui();
 out:
 	free_files();

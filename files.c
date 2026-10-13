@@ -5,17 +5,31 @@ struct file *files = NULL;
 size_t nfiles = 0u;
 size_t current_file = 0u;
 
+static void
+null_image_data(struct file *file)
+{
+	file->image.raster = NULL;
+	file->image.vector = NULL;
+	file->exif_tags = NULL;
+	file->exif = NULL;
+}
+
+void
+destroy_file(struct file *file)
+{
+	free(file->path);
+	g_clear_object(&file->image.raster);
+	g_clear_object(&file->image.vector);
+	if (file->exif_tags)
+		g_strfreev(file->exif_tags);
+	g_clear_object(&file->exif);
+}
+
 void
 free_files(void)
 {
-	while (nfiles) {
-		--nfiles;
-		free(files[nfiles].path);
-		g_clear_object(&files[nfiles].image);
-		if (files[nfiles].exif_tags)
-			g_strfreev(files[nfiles].exif_tags);
-		g_clear_object(&files[nfiles].exif);
-	}
+	while (nfiles)
+		destroy_file(&files[--nfiles]);
 	free(files);
 	files = NULL;
 	current_file = 0u;
@@ -27,9 +41,7 @@ files_from_array(struct file *selected_files, size_t nselected_files)
 	size_t i, n;
 
 	for (i = 0u, n = 0u; i < nselected_files; i++) {
-		selected_files[i].image = NULL;
-		selected_files[i].exif_tags = NULL;
-		selected_files[i].exif = NULL;
+		null_image_data(&selected_files[i]);
 		if (load_image(&selected_files[i], 0)) {
 			if (i != n)
 				selected_files[n] = selected_files[i];
@@ -57,9 +69,7 @@ files_from_list(struct file **files_out, GSList *selected_files)
 
 	for (file = selected_files, i = 0u; file; file = file->next) {
 		new_files[i].path = estrdup(file->data);
-		new_files[i].image = NULL;
-		new_files[i].exif_tags = NULL;
-		new_files[i].exif = NULL;
+		null_image_data(&new_files[i]);
 		g_free(file->data);
 
 		if (load_image(&new_files[i], 0))
@@ -94,9 +104,7 @@ set_files_from_argv(int argc, char **argv)
 	files = ecalloc(nfiles, sizeof(*files));
 	for (i = 0u; i < nfiles; i++) {
 		files[i].path = estrdup(argv[i]);
-		files[i].image = NULL;
-		files[i].exif_tags = NULL;
-		files[i].exif = NULL;
+		null_image_data(&files[i]);
 		if (!load_image(&files[i], 1)) {
 			free(files[i].path);
 			ok = 0;
@@ -110,9 +118,7 @@ set_files_from_argv(int argc, char **argv)
 struct file *
 get_file(void)
 {
-	if (current_file >= nfiles)
-		return NULL;
-	return &files[current_file];
+	return current_file < nfiles ? &files[current_file] : NULL;
 }
 
 int

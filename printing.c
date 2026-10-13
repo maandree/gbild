@@ -39,7 +39,7 @@ enum field {
 #define NFIELDS (LIST_FIELDS(X_COUNT, +))
 
 struct print_data {
-	GdkPixbuf *image;
+	struct image *image;
 	double width;
 	double height;
 	double left;
@@ -118,31 +118,12 @@ get_printable_size(GtkPageSetup *setup, double *width, double *height)
 }
 
 static int
-get_dpi_option(GdkPixbuf *image, const char *name, double *dpi)
+get_physical_size(struct image *image, double *width, double *height)
 {
-	const char *text = gdk_pixbuf_get_option(image, name);
-	char *end;
-	double value;
-	if (!text)
+	if (!image->has_x_dpi || !image->has_y_dpi)
 		return 0;
-	value = strtod(text, &end);
-	while (isspace(*(unsigned char *)end))
-		end++;
-	if (end == text || *end || !isfinite(value) || value <= 0.0)
-		return 0;
-	*dpi = value;
-	return 1;
-}
-
-static int
-get_print_size_from_resolution(GdkPixbuf *image, double *width, double *height)
-{
-	double x_dpi, y_dpi;
-	if (!get_dpi_option(image, "x-dpi", &x_dpi) ||
-	    !get_dpi_option(image, "y-dpi", &y_dpi))
-		return 0;
-	*width  = 72.0 * gdk_pixbuf_get_width(image)  / x_dpi;
-	*height = 72.0 * gdk_pixbuf_get_height(image) / y_dpi;
+	*width  = 72.0 * (double)image->width  / image->x_dpi;
+	*height = 72.0 * (double)image->height / image->y_dpi;
 	return 1;
 }
 
@@ -284,14 +265,13 @@ positioning_preview_expose(GtkWidget *preview, GdkEventExpose *event, void *user
 	double scale = get_preview_scale(preview, widget);
 	double w = scale * widget->page_width;
 	double h = scale * widget->page_height;
-	double page_x = preview->allocation.width - 8.0 - w;
+	double page_x;
 	double page_y = 8.0;
-	int width, height;
 	cairo_t *cr;
 
-	width = gdk_pixbuf_get_width(data->image);
-	height = gdk_pixbuf_get_height(data->image);
-
+	w = MAX(round(w), 1.0);
+	h = MAX(round(h), 1.0);
+	page_x = round(preview->allocation.width - 8.0 - w);
 	cr = gdk_cairo_create(preview->window);
 
 	cairo_rectangle(cr, event->area.x, event->area.y, event->area.width, event->area.height);
@@ -299,25 +279,30 @@ positioning_preview_expose(GtkWidget *preview, GdkEventExpose *event, void *user
 	gdk_cairo_set_source_color(cr, &preview->style->bg[GTK_STATE_NORMAL]);
 	cairo_paint(cr);
 
+	cairo_save(cr);
+	cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
 	cairo_rectangle(cr, page_x, page_y, w, h);
 	cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
 	cairo_fill(cr);
+	cairo_restore(cr);
 
 	cairo_save(cr);
 
 	cairo_rectangle(cr, page_x, page_y, w, h);
 	cairo_clip(cr);
 	cairo_translate(cr, page_x + scale * data->left, page_y + scale * data->top);
-	cairo_scale(cr, scale * data->width / width, scale * data->height / height);
-	gdk_cairo_set_source_pixbuf(cr, data->image, 0.0, 0.0);
-	cairo_paint(cr);
+	cairo_scale(cr, scale * data->width / (double)data->image->width, scale * data->height / (double)data->image->height);
+	paint_image(cr, data->image);
 
 	cairo_restore(cr);
 
-	cairo_rectangle(cr, page_x, page_y, w, h);
+	cairo_save(cr);
+	cairo_set_antialias(cr, CAIRO_ANTIALIAS_NONE);
+	cairo_rectangle(cr, page_x + 0.5, page_y + 0.5, w - 1.0, h - 1.0);
 	cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
 	cairo_set_line_width(cr, 1.0);
 	cairo_stroke(cr);
+	cairo_restore(cr);
 	cairo_destroy(cr);
 	return 0;
 }
@@ -742,63 +727,34 @@ static void
 draw_page(GtkPrintOperation *operation, GtkPrintContext *context, int page, void *user)
 {
 	struct print_data *data = user;
-	GdkPixbuf *image = data->image;
-	int width, height;
 	cairo_t *cr;
-
 	(void) operation;
 	(void) page;
-
-	width = gdk_pixbuf_get_width(image);
-	height = gdk_pixbuf_get_height(image);
-
 	cr = gtk_print_context_get_cairo_context(context);
 	cairo_translate(cr, data->left, data->top);
-	cairo_scale(cr, data->width / (double)width, data->height / (double)height);
-	gdk_cairo_set_source_pixbuf(cr, image, 0.0, 0.0);
-	cairo_paint(cr);
+	cairo_scale(cr, data->width / (double)data->image->width, data->height / (double)data->image->height);
+	paint_image(cr, data->image);
 }
 
 void
-open_print(GdkPixbuf *image)
+open_print(struct image *image)
 {
 	struct print_data data;
 	GtkPrintOperation *operation;
 	GtkPageSetup *setup;
-	GdkPixbuf *metadata_image;
 	GtkPageOrientation orientation = GTK_PAGE_ORIENTATION_PORTRAIT;
-	double page_width, page_height, s, x, y, temporary;
+	double page_width, page_height, s, x, y;
 	int has_physical_size;
-	int width, height;
 
 	if (!image)
 		return;
 
 	data.image = image;
-	g_object_ref(data.image);
 
-	width  = gdk_pixbuf_get_width(data.image);
-	height = gdk_pixbuf_get_height(data.image);
-	metadata_image = get_original_image();
-	if (!metadata_image)
-		metadata_image = data.image;
-	has_physical_size = get_print_size_from_resolution(metadata_image, &data.width, &data.height);
+	has_physical_size = get_physical_size(image, &data.width, &data.height);
 	if (!has_physical_size) {
-		data.width = width;
-		data.height = height;
-	} else {
-		switch (trans & 7u) {
-		case TRANS_CLOCKWISE:
-		case TRANS_ANTICLOCKWISE:
-		case TRANS_TRANSPOSE:
-		case TRANS_ANTITRANSPOSE:
-			temporary = data.width;
-			data.width = data.height;
-			data.height = temporary;
-			break;
-		default:
-			break;
-		}
+		data.width  = (double)image->width;
+		data.height = (double)image->height;
 	}
 	data.aspect = data.width / data.height;
 
@@ -833,5 +789,4 @@ open_print(GdkPixbuf *image)
 
 	gtk_print_operation_run(operation, GTK_PRINT_OPERATION_ACTION_PRINT_DIALOG, GTK_WINDOW(window), NULL);
 	g_object_unref(operation);
-	g_object_unref(data.image);
 }

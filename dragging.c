@@ -19,16 +19,27 @@ static int
 button_pressed(GtkWidget *widget, GdkEventButton *event, void *user)
 {
 	(void) user;
-	if (event->button == 2u || (event->state & GDK_CONTROL_MASK)) {
-		if (event->button == 1u) {
-			gtk_drag_source_unset(widget);
-			drag_source_disabled = 1;
-		}
+	switch (event->button) {
+	case 1u:
+		if (~event->state & GDK_CONTROL_MASK)
+			return 0;
+		gtk_drag_source_unset(widget);
+		drag_source_disabled = 1;
+		/* fall through */
+	case 2u:
 		dragging = 1;
 		drag_x = (int)event->x_root;
 		drag_y = (int)event->y_root;
+		return 1;
+	case 8u:
+		previous_action(NULL, NULL);
+		return 1;
+	case 9u:
+		next_action(NULL, NULL);
+		return 1;
+	default:
+		return 0;
 	}
-	return dragging;
 }
 
 static int
@@ -62,36 +73,40 @@ pointer_moved(GtkWidget *widget, GdkEventMotion *event, void *user)
 static void
 drag_begin(GtkWidget *widget, GdkDragContext *context, void *user)
 {
-	GdkPixbuf *image, *icon;
+	struct image image;
+	GdkPixbuf *icon;
 	intmax_t height, width;
+	int w, h;
 
 	(void) widget;
 	(void) user;
 
-	image = get_original_image();
-	if (!image)
+	if (!get_original_image(&image))
 		return;
 
-	width = gdk_pixbuf_get_width(image);
-	height = gdk_pixbuf_get_height(image);
-	if (width <= DRAG_ICON_SIZE && height <= DRAG_ICON_SIZE) {
-		gtk_drag_set_icon_pixbuf(context, image, 0, 0);
-		return;
+	width = (intmax_t)image.width;
+	height = (intmax_t)image.height;
+	if (width > DRAG_ICON_SIZE || height > DRAG_ICON_SIZE) {
+		if (width >= height) {
+			height = height * DRAG_ICON_SIZE / width;
+			height = MAX(1, height);
+			width = DRAG_ICON_SIZE;
+		} else {
+			width = width * DRAG_ICON_SIZE / height;
+			width = MAX(1, width);
+			height = DRAG_ICON_SIZE;
+		}
 	}
-	if (width >= height) {
-		height = height * DRAG_ICON_SIZE / width;
-		height = MAX(1, height);
-		width = DRAG_ICON_SIZE;
-	} else {
-		width = width * DRAG_ICON_SIZE / height;
-		width = MAX(1, width);
-		height = DRAG_ICON_SIZE;
+	w = (int)width;
+	h = (int)height;
+
+	if (image.raster && width == image.width && height == image.height) {
+		gtk_drag_set_icon_pixbuf(context, image.raster, 0, 0);
+	} else if ((image.vector && (icon = rasterise(image.vector, w, h))) ||
+	           (image.raster && (icon = gdk_pixbuf_scale_simple(image.raster, w, h, GDK_INTERP_BILINEAR)))) {
+		gtk_drag_set_icon_pixbuf(context, icon, 0, 0);
+		g_object_unref(icon);
 	}
-	icon = gdk_pixbuf_scale_simple(image, (int)width, (int)height, GDK_INTERP_BILINEAR);
-	if (!icon)
-		return;
-	gtk_drag_set_icon_pixbuf(context, icon, 0, 0);
-	g_object_unref(icon);
 }
 
 static void

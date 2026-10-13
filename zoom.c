@@ -35,22 +35,21 @@ zoom_out(Zoom z)
 }
 
 Zoom
-calculate_fit(GdkPixbuf *image, int xfit, int yfit, double cap)
+calculate_fit(struct image *image, int xfit, int yfit, double cap)
 {
 	GtkAdjustment *adjustment;
 	double s = 1.0, y;
-	int w, h;
 
 	if (xfit) {
 		adjustment = logical_scroll_pane_get_hadjustment(LOGICAL_SCROLL_PANE(scroll));
-		w = gdk_pixbuf_get_width(image);
-		s = adjustment->page_size / (double)w;
+		s = (double)image->width;
+		s = adjustment->page_size / s;
 	}
 
 	if (yfit) {
 		adjustment = logical_scroll_pane_get_vadjustment(LOGICAL_SCROLL_PANE(scroll));
-		h = gdk_pixbuf_get_height(image);
-		y = adjustment->page_size / (double)h;
+		y = (double)image->height;
+		y = adjustment->page_size / y;
 		s = xfit ? MIN(s, y) : y;
 	}
 
@@ -61,21 +60,15 @@ calculate_fit(GdkPixbuf *image, int xfit, int yfit, double cap)
 }
 
 Zoom
-calculate_zoom_mode(GdkPixbuf *image, enum zoom_mode mode)
+calculate_zoom_mode(struct image *image, enum zoom_mode mode)
 {
 	switch (mode) {
-	case ZOOM_CUSTOM:
-		break;
-	case ZOOM_NORMAL:
-		return calculate_fit(image, 0, 0, 1.0);
-	case ZOOM_FIT_WIDTH:
-		return calculate_fit(image, 1, 0, HUGE_VAL);
-	case ZOOM_FIT_HEIGHT:
-		return calculate_fit(image, 0, 1, HUGE_VAL);
-	case ZOOM_FIT_WINDOW:
-		return calculate_fit(image, 1, 1, HUGE_VAL);
-	case ZOOM_BEST_FIT:
-		return calculate_fit(image, 1, 1, 1.0);
+	case ZOOM_CUSTOM:      break;
+	case ZOOM_NORMAL:      return calculate_fit(image, 0, 0, 1.0);
+	case ZOOM_FIT_WIDTH:   return calculate_fit(image, 1, 0, HUGE_VAL);
+	case ZOOM_FIT_HEIGHT:  return calculate_fit(image, 0, 1, HUGE_VAL);
+	case ZOOM_FIT_WINDOW:  return calculate_fit(image, 1, 1, HUGE_VAL);
+	case ZOOM_BEST_FIT:    return calculate_fit(image, 1, 1, 1.0);
 	}
 	return zoom;
 }

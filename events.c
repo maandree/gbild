@@ -26,16 +26,14 @@ transform(enum transformation augment)
 static void
 set_zoom_fit(GtkToggleAction *action, enum zoom_mode mode)
 {
-	GdkPixbuf *image;
-
+	struct image image;
 	if (gtk_toggle_action_get_active(action)) {
 		zoom_mode = mode;
-		if ((image = get_image()))
-			set_zoom_and_recentre(calculate_zoom_mode(image, zoom_mode));
+		if (get_image(&image))
+			set_zoom_and_recentre(calculate_zoom_mode(&image, zoom_mode));
 	} else if (zoom_mode == mode) {
 		zoom_mode = ZOOM_CUSTOM; /* deselect zoom */
 	}
-
 	clear_toggles(GROUP_ZOOM, action);
 }
 
@@ -70,9 +68,11 @@ reload_action(GtkAction *action, void *user)
 void
 print_action(GtkAction *action, void *user)
 {
+	struct image image;
 	(void) action;
 	(void) user;
-	open_print(get_image());
+	if (get_image(&image))
+		open_print(&image);
 }
 
 void
@@ -81,6 +81,28 @@ properties_action(GtkAction *action, void *user)
 	(void) action;
 	(void) user;
 	open_properties(get_file());
+}
+
+void
+preferences_action(GtkAction *action, void *user)
+{
+	(void) action;
+	(void) user;
+	open_preferences();
+}
+
+void
+property_pane_action(GtkToggleAction *action, void *user)
+{
+	(void) user;
+	set_property_pane_visible(gtk_toggle_action_get_active(action));
+}
+
+void
+collection_pane_action(GtkToggleAction *action, void *user)
+{
+	(void) user;
+	set_collection_pane_visible(gtk_toggle_action_get_active(action));
 }
 
 void
@@ -276,6 +298,9 @@ key_pressed(GtkWidget *widget, GdkEventKey *event, void *user)
 	}
 
 	if (event->state & GDK_CONTROL_MASK)
+		return 0;
+
+	if (gtk_window_get_focus(GTK_WINDOW(window)) != display_area)
 		return 0;
 
 	amount = (event->state & GDK_MOD1_MASK) ? 1 : SCROLL_AMOUNT;

@@ -4,21 +4,21 @@
 enum transformation trans = TRANS_NONE;
 
 static GdkPixbuf *
-make_negative(GdkPixbuf *image)
+make_negative_raster(GdkPixbuf *raster)
 {
-	GdkPixbuf *new_image;
+	GdkPixbuf *new_raster;
 	uint8_t *pixels;
 	int width, height, rowstride, channels, x, y;
 
-	new_image = gdk_pixbuf_copy(image);
-	if (!new_image)
+	new_raster = gdk_pixbuf_copy(raster);
+	if (!new_raster)
 		exit(1);
 
-	pixels    = gdk_pixbuf_get_pixels(new_image);
-	width     = gdk_pixbuf_get_width(new_image);
-	height    = gdk_pixbuf_get_height(new_image);
-	rowstride = gdk_pixbuf_get_rowstride(new_image);
-	channels  = gdk_pixbuf_get_n_channels(new_image);
+	pixels    = gdk_pixbuf_get_pixels(new_raster);
+	width     = gdk_pixbuf_get_width(new_raster);
+	height    = gdk_pixbuf_get_height(new_raster);
+	rowstride = gdk_pixbuf_get_rowstride(new_raster);
+	channels  = gdk_pixbuf_get_n_channels(new_raster);
 
 	for (y = 0; y < height; y++) {
 		for (x = 0; x < width * channels; x += channels) {
@@ -48,62 +48,91 @@ make_negative(GdkPixbuf *image)
 		pixels = &pixels[rowstride];
 	}
 
-	return new_image;
+	return new_raster;
 }
 
 static GdkPixbuf *
-apply_rotation_and_reflection(GdkPixbuf *image)
+apply_rotation_and_reflection(GdkPixbuf *raster)
 {
-	GdkPixbuf *new_image, *newer_image;
+	GdkPixbuf *new_raster, *newer_raster;
 
 	switch (trans & 7u) {
 	case TRANS_NONE:
 		return NULL;
 	case TRANS_CLOCKWISE:
-		new_image = gdk_pixbuf_rotate_simple(image, GDK_PIXBUF_ROTATE_CLOCKWISE);
+		new_raster = gdk_pixbuf_rotate_simple(raster, GDK_PIXBUF_ROTATE_CLOCKWISE);
 		break;
 	case TRANS_180_DEGREES:
-		new_image = gdk_pixbuf_rotate_simple(image, GDK_PIXBUF_ROTATE_UPSIDEDOWN);
+		new_raster = gdk_pixbuf_rotate_simple(raster, GDK_PIXBUF_ROTATE_UPSIDEDOWN);
 		break;
 	case TRANS_ANTICLOCKWISE:
-		new_image = gdk_pixbuf_rotate_simple(image, GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
+		new_raster = gdk_pixbuf_rotate_simple(raster, GDK_PIXBUF_ROTATE_COUNTERCLOCKWISE);
 		break;
 	case TRANS_FLIP:
 	case TRANS_TRANSPOSE:
-		new_image = gdk_pixbuf_flip(image, 0);
+		new_raster = gdk_pixbuf_flip(raster, 0);
 		break;
 	case TRANS_FLOP:
 	case TRANS_ANTITRANSPOSE:
-		new_image = gdk_pixbuf_flip(image, 1);
+		new_raster = gdk_pixbuf_flip(raster, 1);
 		break;
 	}
-	if (!new_image)
+	if (!new_raster)
 		exit(1);
 
 	switch (trans & 7u) {
 	case TRANS_TRANSPOSE:
 	case TRANS_ANTITRANSPOSE:
-		newer_image = gdk_pixbuf_rotate_simple(new_image, GDK_PIXBUF_ROTATE_CLOCKWISE);
-		if (!newer_image)
+		newer_raster = gdk_pixbuf_rotate_simple(new_raster, GDK_PIXBUF_ROTATE_CLOCKWISE);
+		if (!newer_raster)
 			exit(1);
-		g_object_unref(new_image);
-		return newer_image;
+		g_object_unref(new_raster);
+		return newer_raster;
 	default:
-		return new_image;
+		return new_raster;
 	}
 }
 
-GdkPixbuf *
-apply_transformations(GdkPixbuf *image)
+int
+apply_transformations(struct image *image, struct image *image_out)
 {
-	GdkPixbuf *negative_image, *new_image;
-	negative_image = (trans & TRANS_NEGATIVE) ? make_negative(image) : NULL;
-	new_image = apply_rotation_and_reflection(negative_image ? negative_image : image);
-	if (!new_image)
-		new_image = negative_image ? negative_image : image;
-	else if (negative_image)
-		g_object_unref(negative_image);
-	return new_image == image ? NULL : new_image;
+	GdkPixbuf *negative_raster, *new_raster;
+
+	if (trans == TRANS_NONE)
+		return 0;
+
+	if (image->raster) {
+		negative_raster = (trans & TRANS_NEGATIVE) ? make_negative_raster(image->raster) : NULL;
+		new_raster = apply_rotation_and_reflection(negative_raster ? negative_raster : image->raster);
+		if (!new_raster)
+			new_raster = negative_raster;
+		else if (negative_raster)
+			g_object_unref(negative_raster);
+		image_out->raster = new_raster;
+		if (!image_out->raster)
+			return 0;
+	}
+
+	image_out->vector = image->vector;
+
+	if (swaps_dimensions(trans)) {
+		image_out->width = image->height;
+		image_out->height = image->width;
+		image_out->has_x_dpi = image->has_y_dpi;
+		image_out->has_y_dpi = image->has_x_dpi;
+		image_out->x_dpi = image->y_dpi;
+		image_out->y_dpi = image->x_dpi;
+	} else {
+		image_out->width = image->width;
+		image_out->height = image->height;
+		image_out->has_x_dpi = image->has_x_dpi;
+		image_out->has_y_dpi = image->has_y_dpi;
+		image_out->x_dpi = image->x_dpi;
+		image_out->y_dpi = image->y_dpi;
+	}
+	image_out->has_transformer = get_affine_matrix(&image_out->transformer, trans, image->width, image->height);
+
+	return 1;
 }
 
 static enum transformation
@@ -131,14 +160,31 @@ add_transformation_without_redraw(enum transformation augment)
 	return trans != old;
 }
 
+int
+swaps_dimensions(enum transformation t)
+{
+	switch (t & 7u) {
+	case TRANS_NONE:
+	case TRANS_180_DEGREES:
+	case TRANS_FLIP:
+	case TRANS_FLOP:
+		return 0;
+	case TRANS_CLOCKWISE:
+	case TRANS_ANTICLOCKWISE:
+	case TRANS_TRANSPOSE:
+	case TRANS_ANTITRANSPOSE:
+		return 1;
+	}
+	abort();
+}
+
 void
 transform_point(enum transformation t, double *x, double *y, double *w, double *h)
 {
 	double x1 = *x, y1 = *y, x2 = *w, y2 = *h;
-
 	switch (t & 7u) {
 	case TRANS_NONE:
-		return;
+		break;
 	case TRANS_CLOCKWISE:
 		*x = y2 - y1;
 		*y = x1;
@@ -146,7 +192,7 @@ transform_point(enum transformation t, double *x, double *y, double *w, double *
 	case TRANS_180_DEGREES:
 		*x = x2 - x1;
 		*y = y2 - y1;
-		return;
+		break;
 	case TRANS_ANTICLOCKWISE:
 		*x = y1;
 		*y = x2 - x1;
@@ -157,16 +203,35 @@ transform_point(enum transformation t, double *x, double *y, double *w, double *
 		break;
 	case TRANS_FLIP:
 		*y = y2 - y1;
-		return;
+		break;
 	case TRANS_ANTITRANSPOSE:
 		*x = y2 - y1;
 		*y = x2 - x1;
 		break;
 	case TRANS_FLOP:
 		*x = x2 - x1;
-		return;
+		break;
 	}
+	if (swaps_dimensions(t)) {
+		*w = y2;
+		*h = x2;
+	}
+}
 
-	*w = y2;
-	*h = x2;
+int
+get_affine_matrix(cairo_matrix_t *matrix_out, enum transformation t, int width, int height)
+{
+	double w = (double)width;
+	double h = (double)height;
+	switch (t & 7u) {
+	case TRANS_NONE:           cairo_matrix_init(matrix_out, +1.0,  0.0,  0.0, +1.0, 0.0, 0.0);  return 0;
+	case TRANS_CLOCKWISE:      cairo_matrix_init(matrix_out,  0.0, +1.0, -1.0,  0.0, h,   0.0);  break;
+	case TRANS_180_DEGREES:    cairo_matrix_init(matrix_out, -1.0,  0.0,  0.0, -1.0, w,   h);    break;
+	case TRANS_ANTICLOCKWISE:  cairo_matrix_init(matrix_out,  0.0, -1.0, +1.0,  0.0, 0.0, w);    break;
+	case TRANS_TRANSPOSE:      cairo_matrix_init(matrix_out,  0.0, +1.0, +1.0,  0.0, 0.0, 0.0);  break;
+	case TRANS_FLOP:           cairo_matrix_init(matrix_out, -1.0,  0.0,  0.0, +1.0, w,   0.0);  break;
+	case TRANS_ANTITRANSPOSE:  cairo_matrix_init(matrix_out,  0.0, -1.0, -1.0,  0.0, h,   w);    break;
+	case TRANS_FLIP:           cairo_matrix_init(matrix_out, +1.0,  0.0,  0.0, -1.0, 0.0, h);    break;
+	}
+	return 1;
 }

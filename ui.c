@@ -9,10 +9,13 @@
 	ACTION(0, 1u, "", "Print", GTK_STOCK_PRINT, "<control>P", "Ctrl+P", print_action, D)\
 	SEPARATOR(0, D)\
 	ACTION(0, 1u, "Proper", "ties", GTK_STOCK_PROPERTIES, "<alt>Return", "Alt+Return", properties_action, D)\
+	ACTION(0, 0u, "Pr", "eferences", GTK_STOCK_PREFERENCES, NULL, "", preferences_action, D)\
 	SEPARATOR(0, D)\
 	ACTION(0, 0u, "", "Close", GTK_STOCK_CLOSE, "<control>W", "Ctrl+W", close_action, D)\
 	TOPLEVEL(0, "", "View", D)\
 	TOGGLE(1, 1u, "F", "ullscreen", GTK_STOCK_FULLSCREEN, "F11", "F11", fullscreen_action, GROUP_NONE, 0, D)\
+	TOGGLE(0, 1u, "", "Property pane", GTK_STOCK_PROPERTIES, "F9", "F9", property_pane_action, GROUP_NONE, 0, D)\
+	TOGGLE(0, 0u, "Image ", "collection", GTK_STOCK_INDEX, "<control>F9", "Ctrl+F9", collection_pane_action, GROUP_NONE, 0, D)\
 	SEPARATOR(1, D)\
 	ACTION(0, 1u, "Re", "set transformations", "document-revert", "<alt>R", "Alt+R", reset_transformations_action, D)\
 	ACTION(1, 1u, "Rotate anti", "clockwise", "image-rotate-left", "<shift>R", "Shift+R", rotate_anticlockwise_action, D)\
@@ -27,7 +30,7 @@
 	SEPARATOR(1, D)\
 	ACTION(1, 1u, "", "Zoom in", "zoom-in", "plus", "+", zoom_in_action, D)\
 	ACTION(1, 1u, "Zoom ", "out", "zoom-out", "minus", "-", zoom_out_action, D)\
-	TOGGLE(1, 1u, "", "Normal size", "zoom-original", "0", "0", normal_size_action, GROUP_ZOOM, 0, D)\
+	TOGGLE(1, 1u, "", "Normal size", "zoom-original", "1", "1", normal_size_action, GROUP_ZOOM, 0, D)\
 	TOGGLE(1, 1u, "Fit to ", "width", "zoom-fit-width", "<control>H", "Ctrl+H", width_fit_action, GROUP_ZOOM, 0, D)\
 	TOGGLE(1, 1u, "Fit to ", "height", "zoom-fit-height", "<control>V", "Ctrl+V", height_fit_action, GROUP_ZOOM, 0, D)\
 	TOGGLE(1, 1u, "", "Fit to window", "zoom-fit-page", "<control><shift>F", "Ctrl+Shift+F", window_fit_action, GROUP_ZOOM, 0, D)\
@@ -47,7 +50,9 @@ GtkToggleAction *fullscreen;
 static GtkWidget *statusbar;
 static GtkWidget *menubar;
 static GtkWidget *toolbar;
+static GtkWidget *property_pane;
 static GtkActionGroup *actions;
+static GdkColor fullscreen_background = {0u, 0u, 0u, 0u};
 
 #define X_SKIP(...)
 #define X_TOPLEVEL(T, A, B, ...)                                    {A B, NULL, A "_" B, NULL, NULL, NULL} __VA_ARGS__
@@ -158,11 +163,20 @@ window_state_changed(GtkWidget *widget, GdkEventWindowState *event, void *user)
 	return 0;
 }
 
+static int
+display_area_button_pressed(GtkWidget *widget, GdkEventButton *event, void *user)
+{
+	(void) event;
+	(void) user;
+	gtk_widget_grab_focus(widget);
+	return 0;
+}
+
 void
 set_up_ui(void)
 {
 	GtkAccelGroup *accelerators;
-	GtkWidget *box;
+	GtkWidget *box, *paned, *content;
 
 	window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 	gtk_window_set_title(GTK_WINDOW(window), "gbild");
@@ -188,20 +202,31 @@ set_up_ui(void)
 	gtk_box_pack_start(GTK_BOX(box), menubar, 0, 0, 0u);
 	gtk_box_pack_start(GTK_BOX(box), toolbar, 0, 0, 0u);
 	display_area = gtk_drawing_area_new();
+	gtk_widget_set_can_focus(display_area, 1);
 	gtk_widget_set_app_paintable(display_area, 1);
 	gtk_widget_set_double_buffered(display_area, 0);
 	scroll = logical_scroll_pane_new();
 	logical_scroll_pane_set_child(LOGICAL_SCROLL_PANE(scroll), display_area);
 	gtk_widget_add_events(scroll, GDK_SCROLL_MASK);
-	g_signal_connect(scroll, "scroll-event", G_CALLBACK(&scroll_event), NULL);
-	gtk_box_pack_start(GTK_BOX(box), scroll, 1, 1, 0u);
+	paned = gtk_hpaned_new();
+	property_pane = gtk_vbox_new(0, 0);
+	gtk_widget_set_no_show_all(property_pane, 1);
+	gtk_paned_pack1(GTK_PANED(paned), property_pane, 0, 1);
+	gtk_paned_pack2(GTK_PANED(paned), scroll, 1, 0);
+	gtk_paned_set_position(GTK_PANED(paned), INITIAL_PROPERTY_PANE_HEIGHT);
+	content = gtk_vbox_new(0, 0);
+	gtk_box_pack_start(GTK_BOX(content), paned, 1, 1, 0u);
+	gtk_box_pack_end(GTK_BOX(content), create_collection_pane(), 0, 0, 0u);
+	gtk_box_pack_start(GTK_BOX(box), content, 1, 1, 0u);
 	statusbar = gtk_statusbar_new();
 	gtk_box_pack_end(GTK_BOX(box), statusbar, 0, 0, 0u);
 
 	gtk_widget_add_events(display_area, GDK_BUTTON_PRESS_MASK |
 	                                    GDK_BUTTON_RELEASE_MASK |
 	                                    GDK_POINTER_MOTION_MASK);
+	g_signal_connect(display_area, "button-press-event", G_CALLBACK(&display_area_button_pressed), NULL);
 	g_signal_connect(display_area, "expose-event", G_CALLBACK(&expose_image), NULL);
+	g_signal_connect(scroll, "scroll-event", G_CALLBACK(&scroll_event), NULL);
 }
 
 void
@@ -262,6 +287,8 @@ clear_toggles(enum toggle_group group, GtkToggleAction *except)
 void
 set_fullscreen_mode(int active)
 {
+	gtk_widget_modify_bg(display_area, GTK_STATE_NORMAL, active ? &fullscreen_background : NULL);
+	gtk_widget_queue_draw(display_area);
 	gtk_widget_set_visible(menubar, !active);
 	gtk_widget_set_visible(toolbar, !active);
 	gtk_widget_set_visible(statusbar, !active);
@@ -272,6 +299,42 @@ set_fullscreen_mode(int active)
 		gtk_window_fullscreen(GTK_WINDOW(window));
 	else
 		gtk_window_unfullscreen(GTK_WINDOW(window));
+}
+
+void
+set_property_pane_visible(int visible)
+{
+	struct file *file;
+	GtkWidget *properties;
+	GList *children, *child;
+
+	if (!visible) {
+		gtk_widget_hide(property_pane);
+		g_idle_add(&recalculate_zoom_mode, NULL);
+		return;
+	}
+
+	children = gtk_container_get_children(GTK_CONTAINER(property_pane));
+	for (child = children; child; child = child->next)
+		gtk_widget_destroy(child->data);
+	g_list_free(children);
+	file = get_file();
+	if (file && file->path) {
+		properties = gtk_scrolled_window_new(NULL, NULL);
+		gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(properties), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+		gtk_box_pack_start(GTK_BOX(property_pane), properties, 1, 1, 0);
+		gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(properties), create_property_table(file));
+		gtk_widget_show_all(properties);
+	}
+	gtk_widget_show(property_pane);
+	g_idle_add(&recalculate_zoom_mode, NULL);
+}
+
+void
+update_property_pane(void)
+{
+	if (gtk_widget_get_visible(property_pane))
+		set_property_pane_visible(1);
 }
 
 int

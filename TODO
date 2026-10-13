@@ -1,11 +1,10 @@
-Optional (opt-in) side-pane ("_Property pane") with image properties (accelerator: F9)
+Use hand cursor when dragging image to move it
 
-Optional (opt-in) bottom-pane ("Image _collection") with image thumbnails (accelerator: Control+F9)
-	The bottom-pane shall support:
-	*	drag and drop to reorder
-	*	drag to another application to drop the file by path there
-	*	drop form another application to add the image to the collection
-	*	right-clicking on a thumbnail and "_Remove from collection" (icon: edit-delete)
+Properties shall display SVG data
+
+Render icon of image when also when dragging from the image collection
+
+Save preferences to file
 
 Automatically go to next picture
 
@@ -13,18 +12,23 @@ Animation support
 
 "Properties" shall display Exif thumbnail if embedded
 
-Preferences for transparency
-
-Preferences for changling GDK_INTERP_BILINEAR
-
-Preferences for scaling to physical size rather than 1:1 pixel mapping
-
-Perference for automatically applying embedded transformation ("orientation")
-
-Add support for farbfeld
-
-Add support for lss16
-
-Add support for pam (portable anymap)
-
 Colour space support
+
+Add support for bicubic interpolation
+
+Add support for Lanczos resampling
+
+Add command line options for settings and panes:
+	+f = no fullscreen
+	-p = show property pane
+	+p = hide property pane
+	-c = show image collection
+	+c = hide image collection
+	-t = apply embedded orientation
+	+t = do not embedded orientation
+	-n = apply normal size is physical size
+	+n = do not apply normal size is physical size
+	-s NAME = apply scaling algorithm NAME
+	-S SIZE = apply chequer size SIZE, 0 for no chequered background
+	-C COLOUR1[:COLOUR2] = use COLOUR1 and COLOUR2 (= COLOUR1 if omitted) for the chequered background
+	+C = do not apply chequered background

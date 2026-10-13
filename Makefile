@@ -4,6 +4,7 @@ CONFIGFILE = config.mk
 include $(CONFIGFILE)
 
 OBJ =\
+	collection.o\
 	dragging.o\
 	dropping.o\
 	events.o\
@@ -11,8 +12,10 @@ OBJ =\
 	filters.o\
 	image.o\
 	opening.o\
+	preferences.o\
 	printing.o\
 	properties.o\
+	render.o\
 	transform.o\
 	ui.o\
 	zoom.o\

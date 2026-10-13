@@ -11,6 +11,12 @@
 #ifndef PREVIEW_HEIGHT
 # define PREVIEW_HEIGHT 256
 #endif
+#ifndef INITIAL_COLLECTION_PANE_HEIGHT
+# define INITIAL_COLLECTION_PANE_HEIGHT 160
+#endif
+#ifndef INITIAL_PROPERTY_PANE_HEIGHT
+# define INITIAL_PROPERTY_PANE_HEIGHT 300
+#endif
 
 #if defined(__GNUC__)
 # pragma GCC diagnostic push
@@ -20,6 +26,7 @@
 #include <gdk/gdkkeysyms.h>
 #include <gexiv2/gexiv2.h>
 #include <gtk/gtk.h>
+#include <librsvg/rsvg.h>
 #include <libsimple.h>
 #include <libsimple-arg.h>
 #include <math.h>
@@ -77,10 +84,23 @@ enum transformation {
 	TRANS_NEGATIVE = 0x08
 };
 
+struct image {
+	GdkPixbuf *raster;
+	RsvgHandle *vector;
+	int width;
+	int height;
+	int has_x_dpi;
+	int has_y_dpi;
+	int has_transformer;
+	cairo_matrix_t transformer;
+	double x_dpi;
+	double y_dpi;
+};
+
 struct file {
 	char *path;
 	off_t size;
-	GdkPixbuf *image;
+	struct image image;
 	char **exif_tags;
 	GExiv2Metadata *exif;
 };
@@ -88,10 +108,19 @@ struct file {
 typedef double Zoom; /* TODO */
 
 
+/* collection.c */
+extern GtkWidget *collection_view;
+GtkWidget *create_collection_pane(void);
+void set_collection_pane_visible(int visible);
+void navigate_collection_drag(void);
+void collection_files_changed(void);
+void update_collection(void);
+
 /* dragging.c */
 void set_up_dragging(void);
 
 /* dropping.c */
+size_t get_dropped_files(struct file **files_out, char **uris);
 void set_up_dropping(void);
 
 /* events.c */
@@ -99,6 +128,9 @@ void open_action(GtkAction *action, void *user);
 void reload_action(GtkAction *action, void *user);
 void print_action(GtkAction *action, void *user);
 void properties_action(GtkAction *action, void *user);
+void property_pane_action(GtkToggleAction *action, void *user);
+void collection_pane_action(GtkToggleAction *action, void *user);
+void preferences_action(GtkAction *action, void *user);
 void close_action(GtkAction *action, void *user);
 void fullscreen_action(GtkToggleAction *action, void *user);
 void reset_transformations_action(GtkAction *action, void *user);
@@ -128,6 +160,7 @@ int scroll_event(GtkWidget *widget, GdkEventScroll *event, void *user);
 extern struct file *files;
 extern size_t nfiles;
 extern size_t current_file;
+void destroy_file(struct file *file);
 void free_files(void);
 size_t files_from_array(struct file *selected_files, size_t nselected_files);
 size_t files_from_list(struct file **files_out, GSList *selected_files);
@@ -140,26 +173,42 @@ void add_image_filters(GtkFileChooser *chooser);
 void free_image_filters(void);
 
 /* image.c */
-extern GdkPixbuf *transformed_image;
-GdkPixbuf *get_image(void);
-GdkPixbuf *get_original_image(void);
+extern GdkPixbuf *transformed_raster;
+void forget_transformed_raster(void);
+int get_image(struct image *image);
+int get_original_image(struct image *image);
 
 /* opening.c */
 int load_image(struct file *file, int errors_to_stderr);
 GtkFileChooser *construct_chooser(void);
 
 /* printing.c */
-void open_print(GdkPixbuf *image);
+void open_print(struct image *image);
+
+/* render.c */
+GdkPixbuf *rasterise(RsvgHandle *vector, int width, int height);
+void paint_image(cairo_t *cr, struct image *image);
+
+/* preferences.c */
+extern cairo_filter_t scaling_filter;
+extern GdkColor chequer_colours[2];
+extern uint16_t chequer_alphas[2];
+extern int chequered_background;
+extern int chequer_size;
+void open_preferences(void);
 
 /* properties.c */
+GtkWidget *create_property_table(struct file *file);
 void open_properties(struct file *file);
 
 /* transform.c */
 extern enum transformation trans;
-GdkPixbuf *apply_transformations(GdkPixbuf *image);
+int apply_transformations(struct image *image, struct image *image_out);
 enum transformation reset_transformations_without_redraw(void);
 int add_transformation_without_redraw(enum transformation augment);
+int swaps_dimensions(enum transformation t);
 void transform_point(enum transformation t, double *x, double *y, double *w, double *h);
+int get_affine_matrix(cairo_matrix_t *matrix_out, enum transformation t, int width, int height);
 
 /* ui.c */
 extern GtkWidget *window;
@@ -170,6 +219,8 @@ void set_up_ui(void);
 void set_actions_sensitive(void);
 void clear_toggles(enum toggle_group group, GtkToggleAction *except);
 void set_fullscreen_mode(int active);
+void set_property_pane_visible(int visible);
+void update_property_pane(void);
 int activate_fullscreen(void *user);
 int deactivate_fullscreen(void *user);
 void set_statusbar_message(const char *message);
@@ -183,8 +234,8 @@ double get_zoom(Zoom z);
 Zoom make_zoom(double s);
 Zoom zoom_in(Zoom z);
 Zoom zoom_out(Zoom z);
-Zoom calculate_fit(GdkPixbuf *image, int xfit, int yfit, double cap);
-Zoom calculate_zoom_mode(GdkPixbuf *image, enum zoom_mode mode);
+Zoom calculate_fit(struct image *image, int xfit, int yfit, double cap);
+Zoom calculate_zoom_mode(struct image *image, enum zoom_mode mode);
 
 /* gbild.c */
 int expose_image(GtkWidget *widget, GdkEventExpose *event, void *user);
