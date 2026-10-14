@@ -1,16 +1,14 @@
-Use hand cursor when dragging image to move it
-
-Properties shall display SVG data
-
-Render icon of image when also when dragging from the image collection
+Create thumbnails for the image collection as they become visible;
+  cache the thumbnail in the `struct file`
+  (also store the thumbnail size used and whether embedded transformation was applied)
 
 Save preferences to file
+
+Do not all of populate_collection() when new files are added without removing old files
 
 Automatically go to next picture
 
 Animation support
-
-"Properties" shall display Exif thumbnail if embedded
 
 Colour space support
 
@@ -18,17 +16,4 @@ Add support for bicubic interpolation
 
 Add support for Lanczos resampling
 
-Add command line options for settings and panes:
-	+f = no fullscreen
-	-p = show property pane
-	+p = hide property pane
-	-c = show image collection
-	+c = hide image collection
-	-t = apply embedded orientation
-	+t = do not embedded orientation
-	-n = apply normal size is physical size
-	+n = do not apply normal size is physical size
-	-s NAME = apply scaling algorithm NAME
-	-S SIZE = apply chequer size SIZE, 0 for no chequered background
-	-C COLOUR1[:COLOUR2] = use COLOUR1 and COLOUR2 (= COLOUR1 if omitted) for the chequered background
-	+C = do not apply chequered background
+Need another library to display more SVG metadata

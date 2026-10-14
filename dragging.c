@@ -9,6 +9,27 @@ static int drag_source_disabled = 0;
 static int drag_x, drag_y;
 
 static void
+set_pan_cursor(GtkWidget *widget, int active)
+{
+	GdkWindow *gdk_window = gtk_widget_get_window(widget);
+	GdkCursor *cursor;
+
+	if (!gdk_window)
+		return;
+	if (!active) {
+		gdk_window_set_cursor(gdk_window, NULL);
+		return;
+	}
+	cursor = gdk_cursor_new_from_name(gtk_widget_get_display(widget), "grabbing");
+	if (!cursor)
+		cursor = gdk_cursor_new(GDK_HAND1);
+	if (!cursor)
+		return;
+	gdk_window_set_cursor(gdk_window, cursor);
+	gdk_cursor_unref(cursor);
+}
+
+static void
 set_file_drag_source(GtkWidget *widget)
 {
 	gtk_drag_source_set(widget, GDK_BUTTON1_MASK, &url_list, 1u,
@@ -18,16 +39,24 @@ set_file_drag_source(GtkWidget *widget)
 static int
 button_pressed(GtkWidget *widget, GdkEventButton *event, void *user)
 {
+	struct file *file;
 	(void) user;
 	switch (event->button) {
 	case 1u:
-		if (~event->state & GDK_CONTROL_MASK)
+		if (~event->state & GDK_CONTROL_MASK) {
+			file = get_file();
+			if (file && file->path)
+				return 0;
+			gtk_drag_source_unset(widget);
+			drag_source_disabled = 1;
 			return 0;
+		}
 		gtk_drag_source_unset(widget);
 		drag_source_disabled = 1;
 		/* fall through */
 	case 2u:
 		dragging = 1;
+		set_pan_cursor(widget, 1);
 		drag_x = (int)event->x_root;
 		drag_y = (int)event->y_root;
 		return 1;
@@ -47,6 +76,8 @@ button_released(GtkWidget *widget, GdkEventButton *event, void *user)
 {
 	(void) event;
 	(void) user;
+	if (dragging)
+		set_pan_cursor(widget, 0);
 	dragging = 0;
 	if (drag_source_disabled) {
 		set_file_drag_source(widget);
@@ -70,22 +101,20 @@ pointer_moved(GtkWidget *widget, GdkEventMotion *event, void *user)
 	return dragging;
 }
 
-static void
-drag_begin(GtkWidget *widget, GdkDragContext *context, void *user)
+void
+set_image_drag_icon(GdkDragContext *context, struct image *image)
 {
-	struct image image;
-	GdkPixbuf *icon;
+	GdkPixbuf *icon, *icon2;
+	enum transformation orientation;
 	intmax_t height, width;
 	int w, h;
 
-	(void) widget;
-	(void) user;
-
-	if (!get_original_image(&image))
+	if (!image)
 		return;
 
-	width = (intmax_t)image.width;
-	height = (intmax_t)image.height;
+	orientation = image->embedded_transformation;
+	width = (intmax_t)image->width;
+	height = (intmax_t)image->height;
 	if (width > DRAG_ICON_SIZE || height > DRAG_ICON_SIZE) {
 		if (width >= height) {
 			height = height * DRAG_ICON_SIZE / width;
@@ -100,13 +129,33 @@ drag_begin(GtkWidget *widget, GdkDragContext *context, void *user)
 	w = (int)width;
 	h = (int)height;
 
-	if (image.raster && width == image.width && height == image.height) {
-		gtk_drag_set_icon_pixbuf(context, image.raster, 0, 0);
-	} else if ((image.vector && (icon = rasterise(image.vector, w, h))) ||
-	           (image.raster && (icon = gdk_pixbuf_scale_simple(image.raster, w, h, GDK_INTERP_BILINEAR)))) {
+	if (image->raster && width == image->width && height == image->height) {
+		if (orientation && (icon = transform_raster(image->raster, orientation)))
+			goto set_icon;
+		gtk_drag_set_icon_pixbuf(context, image->raster, 0, 0);
+	} else if (image->vector && (icon = rasterise(image->vector, w, h))) {
+		goto set_icon;
+	} else if (image->raster && (icon = gdk_pixbuf_scale_simple(image->raster, w, h, GDK_INTERP_BILINEAR))) {
+		if (orientation && (icon2 = transform_raster(icon, orientation))) {
+			g_object_unref(icon);
+			icon = icon2;
+		}
+	set_icon:
 		gtk_drag_set_icon_pixbuf(context, icon, 0, 0);
 		g_object_unref(icon);
 	}
+}
+
+static void
+drag_begin(GtkWidget *widget, GdkDragContext *context, void *user)
+{
+	struct image image;
+
+	(void) widget;
+	(void) user;
+
+	if (get_original_image(&image))
+		set_image_drag_icon(context, &image);
 }
 
 static void

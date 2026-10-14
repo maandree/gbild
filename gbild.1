@@ -4,7 +4,12 @@ gbild \- GTK+ 2 Image viewer
 
 .SH SYNOPSIS
 .B gbild
-.RB [ \-f ]
+.RB [ \-s \ \fIalgorithm\fP]
+.RB [ \-S \ \fIsize\fP]
+.RB [ \-C \ \fIcolour1\fP[ : \fIcolour2\fP]]
+.RB [ \-z \ \fIzoom\fP]
+.RB [ -fpctn ]
+.RB [ +fpctnC ]
 .RI [ file "] ..."
 
 .SH DESCRIPTION
@@ -15,6 +20,93 @@ is a GTK+ 2 image viewer.
 .TP
 .B \-f
 Start in full-screen mode.
+.TP
+.B +f
+Do not start in full-screen mode.
+.TP
+.B \-p
+Show the property pane.
+.TP
+.B +p
+Hide the property pane.
+.TP
+.B \-c
+Show the image collection.
+.TP
+.B +c
+Hide the image collection.
+.TP
+.B \-t
+Apply an image's embedded orientation.
+.TP
+.B +t
+Do not apply an image's embedded orientation.
+.TP
+.B \-n
+Use the image resolution and display resolution to make normal size a physical size.
+.TP
+.B +n
+Use one source pixel per display pixel for normal size.
+.TP
+.BI \-s \ algorithm
+Set the scaling algorithm. Supported values are
+.BR nearest ,
+.BR bilinear ,
+and
+.BR gaussian .
+.TP
+.BI \-S \ size
+Set the chequer square size in pixels. A size of 0 disables the chequered background.
+.TP
+.BI \-C \ colour1\fR[ : colour2\fR]
+Enable the chequered background and set its colours. If the second colour is omitted, the first colour is used for both squares.
+
+Colours use hexadecimal
+.IR RGB ,
+.IR RRGGBB ,
+.IR RRRRGGGGBBBB ,
+.IR RGBA ,
+.IR RRGGBBAA ,
+or
+.I RRRRGGGGBBBBAAAA
+notation, with an optional
+.BR # ,
+.BR 0x ,
+or
+.B 0X
+prefix. RGB-only forms may have a leading alpha percentage;
+for example,
+.B 25%ABCDEF
+sets alpha to 25 percent.
+.TP
+.B +C
+Disable the chequered background.
+.TP
+.BI \-z \ zoom
+Set the initial zoom.
+.I zoom
+shall either be the zoom expressed in perfect (e.g\.\,
+.BR 100% )
+or ratio (e.g\.\,
+.BR 1:1 ),
+or one of the following modes:
+.RS
+.TP
+.B width
+Fit to width
+.TP
+.B height
+Fit to height
+.TP
+.B window
+Fit to window
+.TP
+.B best
+Best fit
+.TP
+.B stretch
+Stretch to window
+.RE
 
 .SH OPERANDS
 .TP

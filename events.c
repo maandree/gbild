@@ -218,37 +218,21 @@ zoom_out_action(GtkAction *action, void *user)
 void
 normal_size_action(GtkToggleAction *action, void *user)
 {
+	(void) action;
 	(void) user;
-	set_zoom_fit(action, ZOOM_NORMAL);
+	clear_toggles(GROUP_ZOOM, NULL);
+	set_zoom_around_centre(normal_zoom);
 }
 
-void
-width_fit_action(GtkToggleAction *action, void *user)
-{
-	(void) user;
-	set_zoom_fit(action, ZOOM_FIT_WIDTH);
-}
-
-void
-height_fit_action(GtkToggleAction *action, void *user)
-{
-	(void) user;
-	set_zoom_fit(action, ZOOM_FIT_HEIGHT);
-}
-
-void
-window_fit_action(GtkToggleAction *action, void *user)
-{
-	(void) user;
-	set_zoom_fit(action, ZOOM_FIT_WINDOW);
-}
-
-void
-best_fit_action(GtkToggleAction *action, void *user)
-{
-	(void) user;
-	set_zoom_fit(action, ZOOM_BEST_FIT);
-}
+#define X(E, A, ...)\
+	void\
+	A(GtkToggleAction *action, void *user)\
+	{\
+		(void) user;\
+		set_zoom_fit(action, E);\
+	}
+LIST_ZOOM_MODES(X,)
+#undef X
 
 void
 next_action(GtkAction *action, void *user)

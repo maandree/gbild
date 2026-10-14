@@ -1,6 +1,8 @@
 /* See LICENSE file for copyright and license details. */
 #include "common.h"
 
+static const char *svg_units[] = {"%", "px", "em", "ex", "in", "cm", "mm", "pt", "pc", "ch"};
+
 static GtkWidget *
 new_metadata_label(const char *text)
 {
@@ -17,10 +19,56 @@ add_metadata_row(GtkTable *table, guint row, PangoAttrList *name_attributes, con
 	GtkWidget *property = gtk_vbox_new(0, 0);
 	GtkWidget *name_label = new_metadata_label(name);
 	GtkWidget *value_label = new_metadata_label(value);
+	gtk_label_set_line_wrap(GTK_LABEL(name_label), 0);
+	gtk_label_set_line_wrap(GTK_LABEL(value_label), 0);
 	gtk_label_set_attributes(GTK_LABEL(name_label), name_attributes);
 	gtk_box_pack_start(GTK_BOX(property), name_label, 0, 0, 0);
 	gtk_box_pack_start(GTK_BOX(property), value_label, 0, 0, 0);
 	gtk_table_attach(table, property, 0, 1, row, row + 1, GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+}
+
+static void
+add_thumbnail_row(GtkTable *table, guint row, PangoAttrList *name_attributes, GdkPixbuf *thumbnail)
+{
+	GtkWidget *property = gtk_vbox_new(0, 0);
+	GtkWidget *name_label = new_metadata_label("EXIF thumbnail");
+	GtkWidget *image = gtk_image_new_from_pixbuf(thumbnail);
+	gtk_label_set_line_wrap(GTK_LABEL(name_label), 0);
+	gtk_label_set_attributes(GTK_LABEL(name_label), name_attributes);
+	gtk_misc_set_alignment(GTK_MISC(image), 0.0, 0.0);
+	gtk_box_pack_start(GTK_BOX(property), name_label, 0, 0, 0);
+	gtk_box_pack_start(GTK_BOX(property), image, 0, 0, 0);
+	gtk_table_attach(table, property, 0, 1, row, row + 1, GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+}
+
+static GdkPixbuf *
+load_exif_thumbnail(GExiv2Metadata *metadata, enum transformation orientation)
+{
+	GdkPixbuf *thumbnail = NULL;
+	GdkPixbufLoader *loader;
+	GError *error = NULL;
+	guint8 *data = NULL;
+	gint size = 0;
+
+	if (!metadata || !gexiv2_metadata_get_exif_thumbnail(metadata, &data, &size) || size <= 0)
+		goto out;
+
+	loader = gdk_pixbuf_loader_new();
+	if (loader && gdk_pixbuf_loader_write(loader, data, (size_t)size, &error) &&
+	    gdk_pixbuf_loader_close(loader, &error) &&
+	    (thumbnail = gdk_pixbuf_loader_get_pixbuf(loader)))
+		g_object_ref(thumbnail);
+	g_clear_error(&error);
+	g_clear_object(&loader);
+
+out:
+	g_free(data);
+	if (thumbnail && orientation != TRANS_NONE) {
+		GdkPixbuf *oriented = transform_raster(thumbnail, orientation);
+		g_object_unref(thumbnail);
+		thumbnail = oriented;
+	}
+	return thumbnail;
 }
 
 static int
@@ -118,16 +166,9 @@ format_pixel_size(GdkPixbuf *raster)
 static char *
 format_orientation(const char *value)
 {
-	static const char *const descriptions[] = {
-		"Normal",
-		"Flip horizontally",
-		"Rotate 180°",
-		"Flip vertically",
-		"Transpose",
-		"Rotate 90° clockwise",
-		"Antitranspose",
-		"Rotate 90° counterclockwise",
-	};
+#define X(I, E, T) T
+	static const char *const descriptions[] = { LIST_ORIENTATIONS(X, COMMA) };
+#undef X
 	char *end, *text;
 	long int orientation = strtol(value, &end, 10);
 	while (isspace((unsigned char)*end))
@@ -157,15 +198,69 @@ format_physical_size(int pixels, double resolution)
 	return text;
 }
 
+static char *
+format_svg_lengths(RsvgLength width, RsvgLength height)
+{
+	char *text;
+	double x = width.length;
+	double y = height.length;
+	const char *xunit = "";
+	const char *yunit = "";
+	if (width.unit == RSVG_UNIT_PERCENT)
+		x *= 100.0;
+	if (height.unit == RSVG_UNIT_PERCENT)
+		y *= 100.0;
+	if ((unsigned)width.unit < ELEMSOF(svg_units))
+		xunit = svg_units[width.unit];
+	if ((unsigned)height.unit < ELEMSOF(svg_units))
+		yunit = svg_units[height.unit];
+	if (width.unit == height.unit) {
+		if (asprintf(&text, "%g × %g %s", x, y, xunit) < 0)
+			eprintf("asprintf:");
+	} else {
+		if (asprintf(&text, "%g %s × %g %s", x, xunit, y, yunit) < 0)
+			eprintf("asprintf:");
+	}
+	return text;
+}
+
+static char *
+format_svg_length(RsvgLength length)
+{
+	char *text;
+	double value = length.length;
+	const char *unit = "";
+	if (length.unit == RSVG_UNIT_PERCENT)
+		value *= 100.0;
+	if ((unsigned)length.unit < ELEMSOF(svg_units))
+		unit = svg_units[length.unit];
+	if (asprintf(&text, "%g %s", value, unit) < 0)
+		eprintf("asprintf:");
+	return text;
+}
+
+static char *
+format_svg_viewbox(RsvgRectangle viewbox)
+{
+	char *text;
+	if (asprintf(&text, "%g × %g from (%g, %g)", viewbox.width, viewbox.height, viewbox.x, viewbox.y) < 0)
+		eprintf("asprintf:");
+	return text;
+}
+
 GtkWidget *
 create_property_table(struct file *file)
 {
 	GtkWidget *table;
+	GdkPixbuf *thumbnail;
 	PangoContext *context;
 	PangoFontMetrics *metrics;
 	PangoAttrList *title_attributes;
 	unsigned i, row = 0u, rows = 2u;
 	const char *orientation = NULL;
+	RsvgLength svg_width, svg_height;
+	RsvgRectangle svg_viewbox;
+	gboolean svg_has_width = 0, svg_has_height = 0, svg_has_viewbox = 0;
 	char *text, *tag, orientation_buf[3u * sizeof(long int) + 1u];
 	int spacing;
 	GList *keys, *key;
@@ -177,6 +272,17 @@ create_property_table(struct file *file)
 	pango_attr_list_insert(title_attributes, pango_attr_weight_new(PANGO_WEIGHT_BOLD));
 
 	options = gdk_pixbuf_get_options(file->image.raster);
+
+	thumbnail = load_exif_thumbnail(file->exif, file->image.embedded_transformation);
+	rows += thumbnail ? 1u : 0u;
+
+	if (file->image.vector) {
+		rsvg_handle_get_intrinsic_dimensions(file->image.vector,
+		                                     &svg_has_width, &svg_width,
+		                                     &svg_has_height, &svg_height,
+		                                     &svg_has_viewbox, &svg_viewbox);
+		rows += (unsigned)((svg_has_width | svg_has_height) + svg_has_viewbox);
+	}
 
 	keys = g_list_sort(g_hash_table_get_keys(options), (GCompareFunc)&strcmp);
 	for (key = keys; key; key = key->next)
@@ -201,7 +307,6 @@ create_property_table(struct file *file)
 		rows += orientation ? 1u : 0u;
 	}
 
-
 	table = gtk_table_new(rows, 1, 0);
 	context = gtk_widget_get_pango_context(table);
 	metrics = pango_context_get_metrics(context, NULL, pango_context_get_language(context));
@@ -215,8 +320,16 @@ create_property_table(struct file *file)
 
 	ROW("File", file->path);
 	ROW("File size", text = format_file_size(file->size));
+	if (svg_has_width && svg_has_height)
+		ROW("Dimensions", text = format_svg_lengths(svg_width, svg_height));
+	else if (svg_has_width)
+		ROW("Width", text = format_svg_length(svg_width));
+	else if (svg_has_height)
+		ROW("Height", text = format_svg_length(svg_height));
+	if (svg_has_viewbox)
+		ROW("View box", text = format_svg_viewbox(svg_viewbox));
 	if (file->image.raster && !file->image.vector)
-		ROW("Pixel dimensions", text = format_pixel_size(file->image.raster));
+		ROW("Dimensions", text = format_pixel_size(file->image.raster));
 	if (orientation)
 		ROW("Orientation", text = format_orientation(orientation));
 	if (file->image.has_x_dpi)
@@ -244,8 +357,12 @@ create_property_table(struct file *file)
 		}
 	}
 
+	if (thumbnail)
+		add_thumbnail_row(GTK_TABLE(table), row++, title_attributes, thumbnail);
+
 #undef ROW
 
+	g_clear_object(&thumbnail);
 	pango_attr_list_unref(title_attributes);
 	return table;
 }

@@ -1,7 +1,7 @@
 /* See LICENSE file for copyright and license details. */
 #include "common.h"
 
-USAGE("[-f] [file] ...");
+USAGE("[-s algorithm] [-S size] [-C colour[:colour]] [-z zoom] [-fpctn] [+fpctnC] [file] ...");
 
 static int suspend_expose = 0;
 
@@ -18,6 +18,7 @@ format_statusbar_message(char *buffer, size_t size, struct file *file, struct im
 	uintmax_t fsize;
 	size_t unit;
 	int r;
+	double s;
 
 	fsize = (uintmax_t)file->size;
 	unit = 0u;
@@ -36,12 +37,13 @@ format_statusbar_message(char *buffer, size_t size, struct file *file, struct im
 	fsize /= 10u;
 
 done:
+	s = get_zoom(zoom);
 	r = snprintf(buffer, size,
-	             "Image %zu of %zu | %ju%s %c | %i × %i pixels | %g%% scale",
+	             "Image %zu of %zu | %ju%s %c | %i × %i pixels | %s%g%s scale",
 	             current_file + 1u, nfiles,
 	             fsize, fsize_decimals, units[unit],
 	             image->width, image->height,
-	             100.0 * get_zoom(zoom));
+		     s < 1.0 ? "100:" : "", s < 1.0 ? 100.0 / s : 100.0 * s, s < 1.0 ? "" : ":100");
 
 	if (r < 0)
 		eprintf("snprintf:");
@@ -128,7 +130,7 @@ draw_transparency_background(cairo_t *cr, struct image *image, double x0, double
 {
 	cairo_matrix_t matrix;
 
-	if (!chequered_background || gtk_toggle_action_get_active(fullscreen))
+	if (!chequered_background || chequer_size <= 0 || gtk_toggle_action_get_active(fullscreen))
 		return;
 	if (!image->vector && !gdk_pixbuf_get_has_alpha(image->raster))
 		return;
@@ -220,7 +222,7 @@ show_image(int update_zoom)
 	transformed = apply_transformations(&original_image, &new_image);
 	display_image = transformed ? &new_image : &original_image;
 
-	if (update_zoom && zoom_mode != ZOOM_CUSTOM && zoom_mode != ZOOM_NORMAL)
+	if (update_zoom && zoom_mode != ZOOM_CUSTOM)
 		zoom = calculate_zoom_mode(display_image, zoom_mode);
 
 	s = get_zoom(zoom);
@@ -492,7 +494,7 @@ recalculate_zoom_mode(void *user)
 {
 	struct image image;
 	(void) user;
-	if (get_image(&image) && zoom_mode != ZOOM_CUSTOM && zoom_mode != ZOOM_NORMAL)
+	if (get_image(&image) && zoom_mode != ZOOM_CUSTOM)
 		set_zoom_and_recentre(calculate_zoom_mode(&image, zoom_mode));
 	return 0;
 }
@@ -509,15 +511,38 @@ int
 main(int argc, char *argv[])
 {
 	int start_fullscreen = 0;
+	int start_property_pane = 0;
+	int start_collection_pane = 0;
 	int failed = 0;
 
 	ARGBEGIN {
-	case 'f':
-		start_fullscreen = 1;
-		break;
+	case 'f':  start_fullscreen             = +1;  break;
+	case 'p':  start_property_pane          = +1;  break;
+	case 'c':  start_collection_pane        = +1;  break;
+	case 't':  apply_embedded_orientation   = +1;  break;
+	case 'n':  normal_size_is_physical_size = +1;  break;
+	case 'C':  if (!parse_and_set_chequer_colours(ARG()))  usage();  break;
+	case 'S':  if (!parse_and_set_chequer_size(ARG()))     usage();  break;
+	case 's':  if (!parse_and_set_scaling_filter(ARG()))   usage();  break;
+	case 'z':  if (!parse_and_set_zoom_mode(ARG()))        usage();  break;
+	default:
+		usage();
+	} ARGALT('+') {
+	case 'f':  start_fullscreen             = -1;  break;
+	case 'p':  start_property_pane          = -1;  break;
+	case 'c':  start_collection_pane        = -1;  break;
+	case 't':  apply_embedded_orientation   = -1;  break;
+	case 'n':  normal_size_is_physical_size = -1;  break;
+	case 'C':  chequered_background         = -1;  break;
 	default:
 		usage();
 	} ARGEND;
+
+	start_fullscreen             = start_fullscreen             > 0;
+	start_property_pane          = start_property_pane          > 0;
+	start_collection_pane        = start_collection_pane        > 0;
+	apply_embedded_orientation   = apply_embedded_orientation   > 0;
+	normal_size_is_physical_size = normal_size_is_physical_size > 0;
 
 	if (!set_files_from_argv(argc, argv))
 		goto fail;
@@ -527,6 +552,8 @@ main(int argc, char *argv[])
 	set_up_ui();
 	set_up_dragging();
 	set_up_dropping();
+	set_visible_panes(start_property_pane, start_collection_pane);
+	set_zoom_mode_toggle();
 
 	set_actions_sensitive();
 	gtk_widget_show_all(window);

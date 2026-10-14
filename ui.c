@@ -30,11 +30,12 @@
 	SEPARATOR(1, D)\
 	ACTION(1, 1u, "", "Zoom in", "zoom-in", "plus", "+", zoom_in_action, D)\
 	ACTION(1, 1u, "Zoom ", "out", "zoom-out", "minus", "-", zoom_out_action, D)\
-	TOGGLE(1, 1u, "", "Normal size", "zoom-original", "1", "1", normal_size_action, GROUP_ZOOM, 0, D)\
+	ACTION(1, 1u, "", "Normal size", "zoom-original", "1", "1", normal_size_action, D)\
 	TOGGLE(1, 1u, "Fit to ", "width", "zoom-fit-width", "<control>H", "Ctrl+H", width_fit_action, GROUP_ZOOM, 0, D)\
 	TOGGLE(1, 1u, "Fit to ", "height", "zoom-fit-height", "<control>V", "Ctrl+V", height_fit_action, GROUP_ZOOM, 0, D)\
 	TOGGLE(1, 1u, "", "Fit to window", "zoom-fit-page", "<control><shift>F", "Ctrl+Shift+F", window_fit_action, GROUP_ZOOM, 0, D)\
-	TOGGLE(1, 1u, "", "Best fit", "zoom-fit-best", "<control>F", "Ctrl+F", best_fit_action, GROUP_ZOOM, 1, D)\
+	TOGGLE(1, 1u, "", "Best fit", "zoom-fit-best", "<control>F", "Ctrl+F", best_fit_action, GROUP_ZOOM, 0, D)\
+	TOGGLE(0 /* TODO there is no good icon */, 1u, "", "Stretch to window", NULL, "S", "S", stretch_action, GROUP_ZOOM, 0, D)\
 	TOPLEVEL(1, "", "Go", D)\
 	ACTION(1, 2u, "", "Previous image", GTK_STOCK_GO_BACK, "<control>Left", "Ctrl+Left", previous_action, D)\
 	ACTION(1, 2u, "", "Next image", GTK_STOCK_GO_FORWARD, "<control>Right", "Ctrl+Right", next_action, D)\
@@ -204,7 +205,6 @@ set_up_ui(void)
 	display_area = gtk_drawing_area_new();
 	gtk_widget_set_can_focus(display_area, 1);
 	gtk_widget_set_app_paintable(display_area, 1);
-	gtk_widget_set_double_buffered(display_area, 0);
 	scroll = logical_scroll_pane_new();
 	logical_scroll_pane_set_child(LOGICAL_SCROLL_PANE(scroll), display_area);
 	gtk_widget_add_events(scroll, GDK_SCROLL_MASK);
@@ -299,6 +299,26 @@ set_fullscreen_mode(int active)
 		gtk_window_fullscreen(GTK_WINDOW(window));
 	else
 		gtk_window_unfullscreen(GTK_WINDOW(window));
+}
+
+void
+set_visible_panes(int property, int collection)
+{
+	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(get_action("Property pane")), property);
+	gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(get_action("Image collection")), collection);
+}
+
+void
+set_zoom_mode_toggle(void)
+{
+	const char *action = NULL;
+
+#define X(E, A, O, T, ...) if (zoom_mode == E) action = T
+	LIST_ZOOM_MODES(X, ;);
+#undef X
+
+	if (action)
+		gtk_toggle_action_set_active(GTK_TOGGLE_ACTION(get_action(action)), 1);
 }
 
 void

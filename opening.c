@@ -81,6 +81,18 @@ get_raster_dpi_option(GdkPixbuf *raster, const char *name, double *dpi)
 	return 1;
 }
 
+static int
+parse_orientation(const char *s)
+{
+	char c;
+	if (!s) return 0;
+	while (isspace(*s)) s++;
+	c = *s;
+	if (!c) return 0;
+	while (isspace(*s)) s++;
+	return (!*s || c < '1' || c > '8') ? 0 : (int)c - '0';
+}
+
 int
 load_image(struct file *file, int errors_to_stderr)
 {
@@ -95,6 +107,7 @@ load_image(struct file *file, int errors_to_stderr)
 	unsigned char *buffer = NULL;
 	size_t size;
 	int fd, ret = 1;
+	int orientation;
 
 	if (!file)
 		return 0;
@@ -140,10 +153,16 @@ load_image(struct file *file, int errors_to_stderr)
 	file->image.vector = vector;
 	vector = NULL;
 
+	if (file->image.vector) {
+		/* TODO get dimensions and dpi from file->image.vector */
+	}
 	file->image.width = gdk_pixbuf_get_width(file->image.raster);
 	file->image.height = gdk_pixbuf_get_height(file->image.raster);
 	file->image.has_x_dpi = get_raster_dpi_option(file->image.raster, "x-dpi", &file->image.x_dpi);
 	file->image.has_y_dpi = get_raster_dpi_option(file->image.raster, "y-dpi", &file->image.y_dpi);
+
+	orientation = parse_orientation(gdk_pixbuf_get_option(file->image.raster, "orientation"));
+	file->image.embedded_transformation = orientation_to_transformation(orientation);
 
 	if (file->exif_tags) {
 		g_strfreev(file->exif_tags);

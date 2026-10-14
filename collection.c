@@ -8,6 +8,7 @@ static GtkCellRenderer *collection_renderer;
 static GtkListStore *collection_model;
 static int collection_height = -1;
 static size_t popup_file;
+static int drag_disabled;
 
 static char url_list_name[] = "text/uri-list";
 static GtkTargetEntry url_list = {url_list_name, 0u, 0u};
@@ -36,7 +37,7 @@ collection_thumbnail_size(void)
 static GdkPixbuf *
 create_thumbnail(struct file *file, int maximum_size)
 {
-	GdkPixbuf *thumbnail = NULL;
+	GdkPixbuf *thumbnail = NULL, *scaled;
 	int width = file->image.width;
 	int height = file->image.height;
 	double w = (double)width;
@@ -47,14 +48,16 @@ create_thumbnail(struct file *file, int maximum_size)
 	height = (int)(s * h);
 	width = MAX(1, width);
 	height = MAX(1, height);
-	if (file->image.vector) {
+	if (file->image.vector)
 		thumbnail = rasterise(file->image.vector, width, height);
-		if (thumbnail)
-			return thumbnail;
+	if (!thumbnail && file->image.raster) {
+		scaled = gdk_pixbuf_scale_simple(file->image.raster, width, height, GDK_INTERP_BILINEAR);
+		if (!apply_embedded_orientation || !file->image.embedded_transformation)
+			return scaled;
+		thumbnail = transform_raster(scaled, file->image.embedded_transformation);
+		g_object_unref(scaled);
 	}
-	if (file->image.raster)
-		return gdk_pixbuf_scale_simple(file->image.raster, width, height, GDK_INTERP_BILINEAR);
-	return NULL;
+	return thumbnail;
 }
 
 static void
@@ -188,7 +191,7 @@ reorder_file(size_t source, size_t target)
 			current_file += 1u;
 	}
 	files[target] = moved;
-	collection_files_changed();
+	collection_files_changed(); /* TODO full populate_collection() is not needed, use gtk_list_store_move_before/after */
 	navigate_redraw();
 }
 
@@ -214,6 +217,16 @@ drag_data_get(GtkWidget *widget, GdkDragContext *context, GtkSelectionData *data
 	}
 	gtk_selection_data_set_uris(data, (char *[]){uri, NULL});
 	g_free(uri);
+}
+
+static void
+drag_begin(GtkWidget *widget, GdkDragContext *context, void *user)
+{
+	size_t index;
+	(void) widget;
+	(void) user;
+	if (get_selected_index(&index) && index < nfiles)
+		set_image_drag_icon(context, &files[index].image);
 }
 
 static void
@@ -283,8 +296,12 @@ collection_button_pressed(GtkWidget *widget, GdkEventButton *event, void *user)
 {
 	GtkWidget *menu, *item;
 	size_t index;
-	(void) widget;
 	(void) user;
+	if (event->button == 1u && !collection_index_at((int)event->x, (int)event->y, &index)) {
+		gtk_drag_source_unset(widget);
+		drag_disabled = 1;
+		return 0;
+	}
 	if (event->button != 3u || !collection_index_at((int)event->x, (int)event->y, &index))
 		return 0;
 	popup_file = index;
@@ -296,6 +313,18 @@ collection_button_pressed(GtkWidget *widget, GdkEventButton *event, void *user)
 	gtk_widget_show_all(menu);
 	gtk_menu_popup(GTK_MENU(menu), NULL, NULL, NULL, NULL, event->button, event->time);
 	return 1;
+}
+
+static int
+collection_button_released(GtkWidget *widget, GdkEventButton *event, void *user)
+{
+	(void) event;
+	(void) user;
+	if (drag_disabled) {
+		gtk_drag_source_set(widget, GDK_BUTTON1_MASK, &url_list, 1u, GDK_ACTION_COPY | GDK_ACTION_MOVE);
+		drag_disabled = 0;
+	}
+	return 0;
 }
 
 GtkWidget *
@@ -317,7 +346,7 @@ create_collection_pane(void)
 	gtk_cell_layout_add_attribute(GTK_CELL_LAYOUT(collection_view), collection_renderer, "pixbuf", COLLECTION_THUMBNAIL);
 	gtk_container_add(GTK_CONTAINER(collection_pane), collection_view);
 
-	gtk_widget_add_events(collection_view, GDK_BUTTON_PRESS_MASK);
+	gtk_widget_add_events(collection_view, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
 	gtk_drag_source_set(collection_view, GDK_BUTTON1_MASK, &url_list, 1u, GDK_ACTION_COPY | GDK_ACTION_MOVE);
 	gtk_drag_dest_set(collection_view, GTK_DEST_DEFAULT_HIGHLIGHT | GTK_DEST_DEFAULT_DROP,
 	                  &url_list, 1u, GDK_ACTION_COPY | GDK_ACTION_MOVE);
@@ -325,8 +354,13 @@ create_collection_pane(void)
 	g_signal_connect(collection_view, "size-allocate", G_CALLBACK(&collection_size_allocated), NULL);
 	g_signal_connect(collection_view, "selection-changed", G_CALLBACK(&collection_selection_changed), NULL);
 	g_signal_connect(collection_view, "button-press-event", G_CALLBACK(&collection_button_pressed), NULL);
+	g_signal_connect(collection_view, "button-release-event", G_CALLBACK(&collection_button_released), NULL);
+	g_signal_connect(collection_view, "drag-begin", G_CALLBACK(&drag_begin), NULL);
 	g_signal_connect(collection_view, "drag-data-get", G_CALLBACK(&drag_data_get), NULL);
 	g_signal_connect(collection_view, "drag-data-received", G_CALLBACK(&drag_data_received), NULL);
+
+	gtk_adjustment_configure(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(collection_pane)),
+	                         0.0, 0.0, 1.0, 1.0, 1.0, 1.0);
 
 	return collection_pane;
 }
@@ -340,6 +374,10 @@ set_collection_pane_visible(int visible)
 		populate_collection();
 		select_current_file();
 		gtk_widget_grab_focus(collection_view);
+		if (!nfiles) {
+			gtk_adjustment_configure(gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(collection_pane)),
+			                         0.0, 0.0, 1.0, 1.0, 1.0, 1.0);
+		}
 	} else {
 		gtk_widget_hide(collection_pane);
 		gtk_widget_grab_focus(display_area);
@@ -361,4 +399,48 @@ update_collection(void)
 {
 	if (collection_pane && gtk_widget_get_visible(collection_pane))
 		select_current_file();
+}
+
+void
+collection_redraw_embedded_orientations(void)
+{
+	GtkTreeIter iter;
+	GtkTreeModel *model;
+	int thumbnail_size;
+	GdkPixbuf *thumbnail;
+	size_t i;
+
+	if (!nfiles || !collection_pane || !gtk_widget_get_visible(collection_pane))
+		return;
+
+	thumbnail_size = collection_thumbnail_size();
+
+	model = GTK_TREE_MODEL(collection_model);
+	if (!gtk_tree_model_get_iter_first(model, &iter))
+		goto repopulate;
+
+	for (i = 0u;;) {
+		if (!files[i].image.embedded_transformation)
+			goto next;
+
+		thumbnail = create_thumbnail(&files[i], thumbnail_size);
+		if (!thumbnail)
+			goto next;
+
+		gtk_list_store_set(collection_model, &iter, COLLECTION_THUMBNAIL,
+		                   thumbnail, COLLECTION_INDEX, (unsigned long)i, -1);
+		g_object_unref(thumbnail);
+
+	next:
+		if (++i == nfiles)
+			break;
+		if (!gtk_tree_model_iter_next(model, &iter))
+			goto repopulate;
+	}
+
+	return;
+
+repopulate:
+	populate_collection();
+	select_current_file();
 }

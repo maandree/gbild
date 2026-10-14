@@ -3,6 +3,17 @@
 
 enum transformation trans = TRANS_NONE;
 
+enum transformation
+multiply_transformations(enum transformation augment, enum transformation augend)
+{
+	enum transformation ret = augment;
+	if (augment & TRANS_TRANSPOSE)
+		ret -= augend;
+	else
+		ret += augend;
+	return (ret & 3u) | ((augment ^ augend) & ~3u);
+}
+
 static GdkPixbuf *
 make_negative_raster(GdkPixbuf *raster)
 {
@@ -52,11 +63,11 @@ make_negative_raster(GdkPixbuf *raster)
 }
 
 static GdkPixbuf *
-apply_rotation_and_reflection(GdkPixbuf *raster)
+apply_rotation_and_reflection(enum transformation t, GdkPixbuf *raster)
 {
 	GdkPixbuf *new_raster, *newer_raster;
 
-	switch (trans & 7u) {
+	switch (t & 7u) {
 	case TRANS_NONE:
 		return NULL;
 	case TRANS_CLOCKWISE:
@@ -80,7 +91,7 @@ apply_rotation_and_reflection(GdkPixbuf *raster)
 	if (!new_raster)
 		exit(1);
 
-	switch (trans & 7u) {
+	switch (t & 7u) {
 	case TRANS_TRANSPOSE:
 	case TRANS_ANTITRANSPOSE:
 		newer_raster = gdk_pixbuf_rotate_simple(new_raster, GDK_PIXBUF_ROTATE_CLOCKWISE);
@@ -93,29 +104,37 @@ apply_rotation_and_reflection(GdkPixbuf *raster)
 	}
 }
 
+GdkPixbuf *
+transform_raster(GdkPixbuf *raster, enum transformation t)
+{
+	GdkPixbuf *rotated;
+	if (t & TRANS_NEGATIVE)
+		raster = make_negative_raster(raster);
+	else
+		g_object_ref(raster);
+	rotated = apply_rotation_and_reflection(t, raster);
+	if (!rotated)
+		return raster;
+	g_object_unref(raster);
+	return rotated;
+}
+
 int
 apply_transformations(struct image *image, struct image *image_out)
 {
-	GdkPixbuf *negative_raster, *new_raster;
+	enum transformation t;
 
-	if (trans == TRANS_NONE)
+	t = apply_embedded_orientation ? multiply_transformations(trans, image->embedded_transformation) : trans;
+
+	if (t == TRANS_NONE)
 		return 0;
 
-	if (image->raster) {
-		negative_raster = (trans & TRANS_NEGATIVE) ? make_negative_raster(image->raster) : NULL;
-		new_raster = apply_rotation_and_reflection(negative_raster ? negative_raster : image->raster);
-		if (!new_raster)
-			new_raster = negative_raster;
-		else if (negative_raster)
-			g_object_unref(negative_raster);
-		image_out->raster = new_raster;
-		if (!image_out->raster)
-			return 0;
-	}
+	if (image->raster)
+		image_out->raster = transform_raster(image->raster, t);
 
 	image_out->vector = image->vector;
 
-	if (swaps_dimensions(trans)) {
+	if (swaps_dimensions(t)) {
 		image_out->width = image->height;
 		image_out->height = image->width;
 		image_out->has_x_dpi = image->has_y_dpi;
@@ -130,12 +149,13 @@ apply_transformations(struct image *image, struct image *image_out)
 		image_out->x_dpi = image->x_dpi;
 		image_out->y_dpi = image->y_dpi;
 	}
-	image_out->has_transformer = get_affine_matrix(&image_out->transformer, trans, image->width, image->height);
+	image_out->embedded_transformation = image->embedded_transformation;
+	image_out->has_transformer = get_affine_matrix(&image_out->transformer, t, image->width, image->height);
 
 	return 1;
 }
 
-static enum transformation
+enum transformation
 inverse_transformation(enum transformation t)
 {
 	return ((4u - t) & 3u) | (t & ~3u);
@@ -153,10 +173,7 @@ int
 add_transformation_without_redraw(enum transformation augment)
 {
 	enum transformation old = trans;
-	if (augment & TRANS_TRANSPOSE)
-		trans = ((augment - trans) & 3u) | ((augment ^ trans) & ~3u);
-	else
-		trans = ((augment + trans) & 3u) | ((augment ^ trans) & ~3u);
+	trans = multiply_transformations(augment, trans);
 	return trans != old;
 }
 
@@ -234,4 +251,16 @@ get_affine_matrix(cairo_matrix_t *matrix_out, enum transformation t, int width, 
 	case TRANS_FLIP:           cairo_matrix_init(matrix_out, +1.0,  0.0,  0.0, -1.0, 0.0, h);    break;
 	}
 	return 1;
+}
+
+enum transformation
+orientation_to_transformation(int orientation)
+{
+	switch (orientation) {
+#define X(I, E, T) case I: return E
+	LIST_ORIENTATIONS(X, ;);
+	default:
+		return TRANS_NONE;
+#undef X
+	}
 }

@@ -1,14 +1,74 @@
 NAME
-       gbild - GTK+ 2 image viewer
+	gbild - GTK+ 2 image viewer
 
 SYNOPSIS
-       gbild [-f] [file] ...
+	gbild [-s algorithm] [-S size] [-C colour[:colour]] [-z zoom] [-fpctn] [+fpctnC] [file] ...
 
 DESCRIPTION
-       gbild is a GTK+ 2 image viewer.
+	gbild is a GTK+ 2 image viewer.
 
 OPTIONS
-       -f	Start in full-screen mode.
+	-f	Start in full-screen mode.
+
+	+f	Do not start in full-screen mode.
+
+	-p	Show the property pane.
+
+	+p	Hide the property pane.
+
+	-c	Show the image collection.
+
+	+c	Hide the image collection.
+
+	-t	Apply an image's embedded orientation.
+
+	+t	Do not apply an image's embedded orientation.
+
+	-n	Use the image resolution and display resolution to make
+		normal size a physical size.
+
+	+n	Use one source pixel per display pixel for normal size.
+
+	-s algorithm
+		Set the scaling algorithm. Supported values are nearest,
+		bilinear, and gaussian.
+
+	-S size
+		Set the chequer square size in pixels. A size of 0
+		disables the chequered background.
+
+	-C colour1[:colour2]
+		Enable the chequered background and set its colours.
+		If the second colour is omitted, the first colour is used
+		for both squares.
+
+		Colours use hexadecimal RGB, RRGGBB, RRRRGGGGBBBB, RGBA,
+		RRGGBBAA, or RRRRGGGGBBBBAAAA notation, with an optional
+		#, 0x, or 0X prefix. RGB-only forms may have a leading
+		alpha percentage; for example, 25%ABCDEF sets alpha to
+		25 percent.
+
+	+C	Disable the chequered background.
+
+	-z zoom
+		Set the initial zoom. zoom shall either be the zoom
+		expressed in perfect (e.g. 100%) or ratio (e.g. 1:1),
+		or one of the following modes:
+
+		width
+			Fit to width
+
+		height
+			Fit to height
+
+		window
+			Fit to window
+
+		best
+			Best fit
+
+		stretch
+			Stretch to window
 
 OPERANDS
 	file

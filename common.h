@@ -11,6 +11,9 @@
 #ifndef PREVIEW_HEIGHT
 # define PREVIEW_HEIGHT 256
 #endif
+#ifndef DEFAULT_CHEQUER_SIZE
+# define DEFAULT_CHEQUER_SIZE 16
+#endif
 #ifndef INITIAL_COLLECTION_PANE_HEIGHT
 # define INITIAL_COLLECTION_PANE_HEIGHT 160
 #endif
@@ -36,6 +39,7 @@
 
 #if defined(__GNUC__)
 # pragma GCC diagnostic ignored "-Wunsuffixed-float-constants"
+# pragma GCC diagnostic ignored "-Waggregate-return"
 # pragma GCC diagnostic ignored "-Wsuggest-attribute=const"
 # pragma GCC diagnostic ignored "-Wsuggest-attribute=pure"
 #endif
@@ -54,6 +58,24 @@
 #define COMMA ,
 
 
+#define LIST_ORIENTATIONS(X, ...)\
+	X(1, TRANS_NONE,          "Normal")               __VA_ARGS__\
+	X(2, TRANS_FLOP,          "Flip horizontally")    __VA_ARGS__\
+	X(3, TRANS_180_DEGREES,   "Rotate 180°")          __VA_ARGS__\
+	X(4, TRANS_FLIP,          "Flip vertically")      __VA_ARGS__\
+	X(5, TRANS_TRANSPOSE,     "Transpose")            __VA_ARGS__\
+	X(6, TRANS_CLOCKWISE,     "Rotate 90° clockwise") __VA_ARGS__\
+	X(7, TRANS_ANTITRANSPOSE, "Antitranspose")        __VA_ARGS__\
+	X(8, TRANS_ANTICLOCKWISE, "Rotate 90° counterclockwise")
+
+#define LIST_ZOOM_MODES(X, ...)\
+	X(ZOOM_FIT_WIDTH,  width_fit_action,  "width",   "Fit to width",      1, 0, 0, HUGE_VAL) __VA_ARGS__\
+	X(ZOOM_FIT_HEIGHT, height_fit_action, "height",  "Fit to height",     0, 1, 0, HUGE_VAL) __VA_ARGS__\
+	X(ZOOM_FIT_WINDOW, window_fit_action, "window",  "Fit to window",     1, 1, 0, HUGE_VAL) __VA_ARGS__\
+	X(ZOOM_BEST_FIT,   best_fit_action,   "best",    "Best fit",          1, 1, 0, 1.0)      __VA_ARGS__\
+	X(ZOOM_STRETCH,    stretch_action,    "stretch", "Stretch to window", 1, 1, 1, HUGE_VAL)
+
+
 enum toggle_group {
 	GROUP_NONE,
 	GROUP_ZOOM
@@ -61,14 +83,13 @@ enum toggle_group {
 
 enum zoom_mode {
 	ZOOM_CUSTOM,
-	ZOOM_NORMAL,
-	ZOOM_FIT_WIDTH,
-	ZOOM_FIT_HEIGHT,
-	ZOOM_FIT_WINDOW,
-	ZOOM_BEST_FIT
+#define X(E, ...) E
+	LIST_ZOOM_MODES(X, COMMA)
+#undef X
 };
 
 enum transformation {
+	/* NB! different order than in LIST_ORIENTATIONS */
 	TRANS_NONE,          /* 1   */
 	TRANS_CLOCKWISE,     /* r   */
 	TRANS_180_DEGREES,   /* r²  */
@@ -91,6 +112,7 @@ struct image {
 	int height;
 	int has_x_dpi;
 	int has_y_dpi;
+	enum transformation embedded_transformation;
 	int has_transformer;
 	cairo_matrix_t transformer;
 	double x_dpi;
@@ -105,7 +127,10 @@ struct file {
 	GExiv2Metadata *exif;
 };
 
-typedef double Zoom; /* TODO */
+typedef struct {
+	double s;
+	int i;
+} Zoom;
 
 
 /* collection.c */
@@ -115,8 +140,10 @@ void set_collection_pane_visible(int visible);
 void navigate_collection_drag(void);
 void collection_files_changed(void);
 void update_collection(void);
+void collection_redraw_embedded_orientations(void);
 
 /* dragging.c */
+void set_image_drag_icon(GdkDragContext *context, struct image *image);
 void set_up_dragging(void);
 
 /* dropping.c */
@@ -145,10 +172,9 @@ void invert_action(GtkToggleAction *action, void *user);
 void zoom_in_action(GtkAction *action, void *user);
 void zoom_out_action(GtkAction *action, void *user);
 void normal_size_action(GtkToggleAction *action, void *user);
-void width_fit_action(GtkToggleAction *action, void *user);
-void height_fit_action(GtkToggleAction *action, void *user);
-void window_fit_action(GtkToggleAction *action, void *user);
-void best_fit_action(GtkToggleAction *action, void *user);
+#define X(E, A, ...) void A(GtkToggleAction *action, void *user)
+LIST_ZOOM_MODES(X, ;);
+#undef X
 void next_action(GtkAction *action, void *user);
 void previous_action(GtkAction *action, void *user);
 void first_action(GtkAction *action, void *user);
@@ -175,8 +201,8 @@ void free_image_filters(void);
 /* image.c */
 extern GdkPixbuf *transformed_raster;
 void forget_transformed_raster(void);
-int get_image(struct image *image);
-int get_original_image(struct image *image);
+int get_image(struct image *image_out);
+int get_original_image(struct image *image_out);
 
 /* opening.c */
 int load_image(struct file *file, int errors_to_stderr);
@@ -195,7 +221,12 @@ extern GdkColor chequer_colours[2];
 extern uint16_t chequer_alphas[2];
 extern int chequered_background;
 extern int chequer_size;
+extern int apply_embedded_orientation;
+extern int normal_size_is_physical_size; /* TODO implement */
 void open_preferences(void);
+int parse_and_set_scaling_filter(const char *s);
+int parse_and_set_chequer_size(const char *s);
+int parse_and_set_chequer_colours(const char *s);
 
 /* properties.c */
 GtkWidget *create_property_table(struct file *file);
@@ -203,12 +234,16 @@ void open_properties(struct file *file);
 
 /* transform.c */
 extern enum transformation trans;
+enum transformation multiply_transformations(enum transformation augment, enum transformation augend);
 int apply_transformations(struct image *image, struct image *image_out);
+GdkPixbuf *transform_raster(GdkPixbuf *raster, enum transformation transformation);
+enum transformation inverse_transformation(enum transformation t);
 enum transformation reset_transformations_without_redraw(void);
 int add_transformation_without_redraw(enum transformation augment);
 int swaps_dimensions(enum transformation t);
 void transform_point(enum transformation t, double *x, double *y, double *w, double *h);
 int get_affine_matrix(cairo_matrix_t *matrix_out, enum transformation t, int width, int height);
+enum transformation orientation_to_transformation(int orientation);
 
 /* ui.c */
 extern GtkWidget *window;
@@ -219,7 +254,9 @@ void set_up_ui(void);
 void set_actions_sensitive(void);
 void clear_toggles(enum toggle_group group, GtkToggleAction *except);
 void set_fullscreen_mode(int active);
+void set_visible_panes(int property, int collection);
 void set_property_pane_visible(int visible);
+void set_zoom_mode_toggle(void);
 void update_property_pane(void);
 int activate_fullscreen(void *user);
 int deactivate_fullscreen(void *user);
@@ -229,13 +266,14 @@ void free_ui(void);
 /* zoom.c */
 extern Zoom zoom;
 extern enum zoom_mode zoom_mode;
+extern const Zoom normal_zoom;
 int zoom_eq(Zoom a, Zoom b);
 double get_zoom(Zoom z);
 Zoom make_zoom(double s);
 Zoom zoom_in(Zoom z);
 Zoom zoom_out(Zoom z);
-Zoom calculate_fit(struct image *image, int xfit, int yfit, double cap);
 Zoom calculate_zoom_mode(struct image *image, enum zoom_mode mode);
+int parse_and_set_zoom_mode(const char *s);
 
 /* gbild.c */
 int expose_image(GtkWidget *widget, GdkEventExpose *event, void *user);
